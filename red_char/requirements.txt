@@ -1,0 +1,10 @@
+torch
+torchvision
+pandas
+numpy
+Pillow
+matplotlib
+tqdm
+
+# CUDA install example:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128

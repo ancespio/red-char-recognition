@@ -1,0 +1,17 @@
+红色字符识别/
+red_char/outputs/
+red_char/__pycache__/
+red_char/*.pyc
+
+*.pt
+*.pth
+*.onnx
+*.csv~
+
+.venv/
+venv/
+env/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
