@@ -11,24 +11,29 @@ from tqdm import tqdm
 
 import config
 from dataset import RedCharDataset, Sample, decode_prediction, load_submission_sample
-from model import RedCharNet
-
-
-def load_model(checkpoint: Path, device: torch.device) -> RedCharNet:
-    model = RedCharNet().to(device)
-    payload = torch.load(checkpoint, map_location=device)
-    model.load_state_dict(payload["state_dict"])
-    model.eval()
-    return model
+from ensemble import average_model_logits, load_models
 
 
 @torch.no_grad()
-def predict_labels(model: RedCharNet, loader: DataLoader, device: torch.device) -> tuple[list[str], list[str]]:
+def predict_labels(
+    models: list[torch.nn.Module],
+    loader: DataLoader,
+    device: torch.device,
+    char_weights: list[float] | None = None,
+    color_weights: list[float] | None = None,
+    tta: bool = False,
+) -> tuple[list[str], list[str]]:
     ids: list[str] = []
     labels: list[str] = []
     for images, filenames in tqdm(loader, desc="predict"):
         images = images.to(device, non_blocking=True)
-        char_logits, color_logits = model(images)
+        char_logits, color_logits = average_model_logits(
+            models,
+            images,
+            char_weights=char_weights,
+            color_weights=color_weights,
+            tta=tta,
+        )
         char_pred = char_logits.argmax(dim=-1).cpu().tolist()
         color_pred = color_logits.argmax(dim=-1).cpu().tolist()
         for filename, chars, colors in zip(filenames, char_pred, color_pred):
@@ -70,21 +75,37 @@ def validate_submission(output_path: Path) -> None:
         print("warning: suspicious length-5 count; sample expectation is about 4")
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=Path, default=config.CHECKPOINT_DIR / "best.pt")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--checkpoint", type=Path)
+    group.add_argument("--checkpoints", type=Path, nargs="+")
+    parser.add_argument("--char-weights", type=float, nargs="+")
+    parser.add_argument("--color-weights", type=float, nargs="+")
+    parser.add_argument("--tta", action="store_true")
     parser.add_argument("--output", type=Path, default=config.OUTPUT_DIR / "submission.csv")
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE)
-    args = parser.parse_args()
+    return parser
 
+
+def main() -> None:
+    args = build_parser().parse_args()
     config.ensure_output_dirs()
     device = torch.device(config.DEVICE)
     sample = load_submission_sample()
     samples = [Sample(row.id) for row in sample.itertuples(index=False)]
     dataset = RedCharDataset(samples, config.TEST_IMAGES, is_test=True, cache_in_ram=False)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, pin_memory=device.type == "cuda")
-    model = load_model(args.checkpoint, device)
-    ids, labels = predict_labels(model, loader, device)
+    checkpoints = args.checkpoints or [args.checkpoint or config.CHECKPOINT_DIR / "best.pt"]
+    models, _ = load_models(checkpoints, device)
+    ids, labels = predict_labels(
+        models,
+        loader,
+        device,
+        char_weights=args.char_weights,
+        color_weights=args.color_weights,
+        tta=args.tta,
+    )
     write_submission(ids, labels, args.output)
     validate_submission(args.output)
     print("submission written:", args.output)

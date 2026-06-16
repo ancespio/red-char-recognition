@@ -28,8 +28,18 @@ python dataset.py
 python model.py
 python train.py --overfit-sanity --no-cache-in-ram
 python train.py --epochs 30
+python train.py --epochs 30 --augment
+python train.py --epochs 50 --augment --seed 43 --run-name augment_seed43
+python train.py --epochs 50 --augment --seed 47 --run-name red_weight_seed47 --red-char-weight 2.5
+python train.py --epochs 50 --augment --seed 49 --run-name wide_seed49 --red-char-weight 2.5 --model-size wide
 python evaluate.py
+python evaluate.py --checkpoints outputs/checkpoints/best.pt outputs/runs/augment_seed44_clean/checkpoints/best.pt
+python ensemble_search.py --checkpoints outputs/checkpoints/best.pt outputs/runs/augment_seed43/checkpoints/best.pt outputs/runs/augment_seed44_clean/checkpoints/best.pt
+python weighted_ensemble_search.py --checkpoints outputs/checkpoints/best.pt outputs/runs/augment_seed43/checkpoints/best.pt outputs/runs/augment_seed44_clean/checkpoints/best.pt --step 0.05
+python beam_weight_search.py --checkpoints outputs/checkpoints/best.pt outputs/runs/augment_seed44_clean/checkpoints/best.pt outputs/runs/augment_seed45/checkpoints/best.pt outputs/runs/red_weight_seed47/checkpoints/best.pt outputs/runs/red_weight_seed48/checkpoints/best.pt --coarse-step 0.1 --fine-step 0.02 --radius 0.08 --top-k 20
+python evaluate.py --checkpoints outputs/checkpoints/best.pt outputs/runs/augment_seed43/checkpoints/best.pt outputs/runs/augment_seed44_clean/checkpoints/best.pt --char-weights 0.45 0.1 0.45 --color-weights 0 0.3 0.7 --tta
 python predict.py
+python predict.py --checkpoints outputs/checkpoints/best.pt outputs/runs/augment_seed43/checkpoints/best.pt outputs/runs/augment_seed44_clean/checkpoints/best.pt --char-weights 0.45 0.1 0.45 --color-weights 0 0.3 0.7 --tta
 ```
 
 数据目录 `红色字符识别/` 为只读本地数据，不纳入 Git 仓库。

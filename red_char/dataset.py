@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import InterpolationMode, RandomAffine
 
 import config
 
@@ -122,6 +123,46 @@ class RedCharDataset(Dataset):
         return image, char_target, color_target
 
 
+class TrainAugmentation:
+    def __init__(
+        self,
+        degrees: float = config.AUGMENT_DEGREES,
+        translate: tuple[float, float] = config.AUGMENT_TRANSLATE,
+        noise_std: float = config.AUGMENT_NOISE_STD,
+    ) -> None:
+        self.affine = RandomAffine(
+            degrees=degrees,
+            translate=translate,
+            interpolation=InterpolationMode.BILINEAR,
+            fill=1.0,
+        )
+        self.noise_std = noise_std
+
+    def __call__(self, image: torch.Tensor) -> torch.Tensor:
+        augmented = self.affine(image)
+        if self.noise_std > 0:
+            augmented = augmented + torch.randn_like(augmented) * self.noise_std
+        return augmented.clamp_(0.0, 1.0)
+
+
+class TransformSubset(Dataset):
+    def __init__(self, dataset: Dataset, indices: list[int], transform=None) -> None:
+        self.dataset = dataset
+        self.indices = indices
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, index: int):
+        item = self.dataset[self.indices[index]]
+        if self.transform is None:
+            return item
+        values = list(item)
+        values[0] = self.transform(values[0])
+        return tuple(values)
+
+
 def build_train_dataset(cache_in_ram: bool = config.CACHE_IN_RAM) -> RedCharDataset:
     df = load_train_frame()
     samples = [Sample(row.filename, row.color, row.all_label) for row in df.itertuples(index=False)]
@@ -146,11 +187,12 @@ def _loader_kwargs(shuffle: bool) -> dict:
     return kwargs
 
 
-def build_dataloaders(cache_in_ram: bool = config.CACHE_IN_RAM) -> tuple[DataLoader, DataLoader, list[str], list[str]]:
+def build_dataloaders(cache_in_ram: bool = config.CACHE_IN_RAM, augment: bool = False) -> tuple[DataLoader, DataLoader, list[str], list[str]]:
     dataset = build_train_dataset(cache_in_ram=cache_in_ram)
     train_indices, val_indices = deterministic_split_indices(len(dataset))
-    train_loader = DataLoader(Subset(dataset, train_indices), **_loader_kwargs(shuffle=True))
-    val_loader = DataLoader(Subset(dataset, val_indices), **_loader_kwargs(shuffle=False))
+    train_transform = TrainAugmentation() if augment else None
+    train_loader = DataLoader(TransformSubset(dataset, train_indices, train_transform), **_loader_kwargs(shuffle=True))
+    val_loader = DataLoader(TransformSubset(dataset, val_indices), **_loader_kwargs(shuffle=False))
     train_names = [dataset.samples[idx].filename for idx in train_indices]
     val_names = [dataset.samples[idx].filename for idx in val_indices]
     return train_loader, val_loader, train_names, val_names

@@ -23,6 +23,7 @@ CHAR_TO_IDX = {ch: idx for idx, ch in enumerate(CHARSET)}
 IDX_TO_CHAR = {idx: ch for idx, ch in enumerate(CHARSET)}
 
 SEED = 42
+SPLIT_SEED = 42
 VAL_RATIO = 0.05
 IMAGE_WIDTH = 200
 IMAGE_HEIGHT = 60
@@ -43,6 +44,10 @@ CACHE_IN_RAM = True
 PIN_MEMORY = True
 PERSISTENT_WORKERS = NUM_WORKERS > 0
 AMP = True
+
+AUGMENT_DEGREES = 3.0
+AUGMENT_TRANSLATE = (0.05, 0.05)
+AUGMENT_NOISE_STD = 0.01
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
