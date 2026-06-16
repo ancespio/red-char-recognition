@@ -20,7 +20,7 @@ def seed_everything(seed: int = config.SEED) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = True
+    config.enable_perf_flags()
 
 
 def encode_labels(color: str, all_label: str) -> tuple[torch.Tensor, torch.Tensor]:
@@ -91,11 +91,15 @@ class RedCharDataset(Dataset):
         image_dir: Path,
         is_test: bool = False,
         cache_in_ram: bool = config.CACHE_IN_RAM,
+        denoised_dir: Path | None = None,
     ) -> None:
         self.samples = samples
         self.image_dir = image_dir
         self.is_test = is_test
         self.cache_in_ram = cache_in_ram
+        # When set, each item is a 6-channel concat of [original | denoised],
+        # so the model keeps original colour/fidelity AND a line-removed cue.
+        self.denoised_dir = denoised_dir
         self._cache: list[torch.Tensor] | None = None
         if cache_in_ram:
             self._cache = [self._load_image(sample.filename) for sample in self.samples]
@@ -103,13 +107,20 @@ class RedCharDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def _load_image(self, filename: str) -> torch.Tensor:
-        path = self.image_dir / filename
+    def _load_one(self, image_dir: Path, filename: str) -> torch.Tensor:
+        path = image_dir / filename
         with Image.open(path) as img:
             img = img.convert("RGB")
             if img.size != (config.IMAGE_WIDTH, config.IMAGE_HEIGHT):
                 raise ValueError(f"{path} size must be 200x60, got {img.size}")
             return _image_to_tensor(img)
+
+    def _load_image(self, filename: str) -> torch.Tensor:
+        orig = self._load_one(self.image_dir, filename)
+        if self.denoised_dir is None:
+            return orig
+        dn = self._load_one(self.denoised_dir, filename)
+        return torch.cat([orig, dn], dim=0)  # [6, H, W]
 
     def __getitem__(self, index: int):
         sample = self.samples[index]
@@ -122,16 +133,65 @@ class RedCharDataset(Dataset):
         return image, char_target, color_target
 
 
-def build_train_dataset(cache_in_ram: bool = config.CACHE_IN_RAM) -> RedCharDataset:
+def build_train_dataset(cache_in_ram: bool = config.CACHE_IN_RAM,
+                        denoised_dir: Path | None = None) -> RedCharDataset:
     df = load_train_frame()
     samples = [Sample(row.filename, row.color, row.all_label) for row in df.itertuples(index=False)]
-    return RedCharDataset(samples, config.TRAIN_IMAGES, is_test=False, cache_in_ram=cache_in_ram)
+    return RedCharDataset(samples, config.TRAIN_IMAGES, is_test=False, cache_in_ram=cache_in_ram,
+                          denoised_dir=denoised_dir)
 
 
 def build_test_dataset(cache_in_ram: bool = False) -> RedCharDataset:
     sample_df = load_submission_sample()
     samples = [Sample(row.id) for row in sample_df.itertuples(index=False)]
     return RedCharDataset(samples, config.TEST_IMAGES, is_test=True, cache_in_ram=cache_in_ram)
+
+
+class _AugmentedSubset(Dataset):
+    """View over a base dataset that applies a transform to the image only.
+
+    Kept separate from ``RedCharDataset`` so the base dataset's RAM cache holds
+    clean (un-augmented) tensors that are reused every epoch, while each
+    ``__getitem__`` returns a freshly warped copy. Used for the training split
+    only; the validation split reads the base dataset directly (no transform).
+    """
+
+    def __init__(self, base: RedCharDataset, indices: list[int], transform) -> None:
+        self.base = base
+        self.indices = indices
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, index: int):
+        image, char_target, color_target = self.base[self.indices[index]]
+        return self.transform(image), char_target, color_target
+
+
+def build_split_datasets(
+    cache_in_ram: bool = config.CACHE_IN_RAM,
+    augment: bool = config.USE_AUGMENT,
+    denoised_dir: Path | None = None,
+    red_line_p: float = 0.0,
+) -> tuple[Dataset, Dataset, list[str], list[str], RedCharDataset]:
+    """Deterministic train/val split with optional train-only augmentation.
+
+    The split itself is unchanged from ``deterministic_split_indices`` so the
+    filename hashes recorded in checkpoints stay comparable across runs.
+    """
+    base = build_train_dataset(cache_in_ram=cache_in_ram, denoised_dir=denoised_dir)
+    train_indices, val_indices = deterministic_split_indices(len(base))
+    train_names = [base.samples[idx].filename for idx in train_indices]
+    val_names = [base.samples[idx].filename for idx in val_indices]
+    if augment:
+        from augment import TrainAugment
+
+        train_ds: Dataset = _AugmentedSubset(base, train_indices, TrainAugment(red_line_p=red_line_p))
+    else:
+        train_ds = Subset(base, train_indices)
+    val_ds: Dataset = Subset(base, val_indices)
+    return train_ds, val_ds, train_names, val_names, base
 
 
 def _loader_kwargs(shuffle: bool) -> dict:
@@ -146,13 +206,13 @@ def _loader_kwargs(shuffle: bool) -> dict:
     return kwargs
 
 
-def build_dataloaders(cache_in_ram: bool = config.CACHE_IN_RAM) -> tuple[DataLoader, DataLoader, list[str], list[str]]:
-    dataset = build_train_dataset(cache_in_ram=cache_in_ram)
-    train_indices, val_indices = deterministic_split_indices(len(dataset))
-    train_loader = DataLoader(Subset(dataset, train_indices), **_loader_kwargs(shuffle=True))
-    val_loader = DataLoader(Subset(dataset, val_indices), **_loader_kwargs(shuffle=False))
-    train_names = [dataset.samples[idx].filename for idx in train_indices]
-    val_names = [dataset.samples[idx].filename for idx in val_indices]
+def build_dataloaders(
+    cache_in_ram: bool = config.CACHE_IN_RAM,
+    augment: bool = config.USE_AUGMENT,
+) -> tuple[DataLoader, DataLoader, list[str], list[str]]:
+    train_ds, val_ds, train_names, val_names, _ = build_split_datasets(cache_in_ram, augment)
+    train_loader = DataLoader(train_ds, **_loader_kwargs(shuffle=True))
+    val_loader = DataLoader(val_ds, **_loader_kwargs(shuffle=False))
     return train_loader, val_loader, train_names, val_names
 
 
@@ -167,10 +227,11 @@ def _self_test() -> None:
     for color, all_label, expected in cases:
         assert target_to_red_string(color, all_label) == expected
 
-    train_loader, _, train_names, val_names = build_dataloaders(cache_in_ram=False)
+    # Split determinism (and hash stability) must hold regardless of augment.
+    train_loader, _, train_names, val_names = build_dataloaders(cache_in_ram=False, augment=True)
     assert len(train_names) == 47500
     assert len(val_names) == 2500
-    _, _, train_names_2, val_names_2 = build_dataloaders(cache_in_ram=False)
+    _, _, train_names_2, val_names_2 = build_dataloaders(cache_in_ram=False, augment=False)
     assert filename_hash(train_names) == filename_hash(train_names_2)
     assert filename_hash(val_names) == filename_hash(val_names_2)
 

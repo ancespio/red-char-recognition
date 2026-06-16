@@ -11,19 +11,22 @@ from tqdm import tqdm
 import config
 from dataset import build_train_dataset, deterministic_split_indices, filename_hash, seed_everything
 from metrics import batch_metrics, compute_loss
-from model import RedCharNet
+from model import build_model
 
 
-def load_model(checkpoint: Path, device: torch.device) -> tuple[RedCharNet, dict]:
+def load_model(checkpoint: Path, device: torch.device, use_ema: bool = True):
     payload = torch.load(checkpoint, map_location=device)
-    model = RedCharNet().to(device)
-    model.load_state_dict(payload["state_dict"])
+    model = build_model(payload.get("model_name", config.MODEL)).to(device)
+    state = payload.get("ema_state_dict") if use_ema else None
+    if state is None:
+        state = payload["state_dict"]
+    model.load_state_dict(state)
     model.eval()
     return model, payload
 
 
 @torch.no_grad()
-def evaluate(checkpoint: Path) -> dict[str, float]:
+def evaluate(checkpoint: Path, use_ema: bool = True) -> dict[str, float]:
     seed_everything()
     config.ensure_output_dirs()
     device = torch.device(config.DEVICE)
@@ -31,7 +34,7 @@ def evaluate(checkpoint: Path) -> dict[str, float]:
     train_indices, val_indices = deterministic_split_indices(len(dataset))
     train_names = [dataset.samples[idx].filename for idx in train_indices]
     val_names = [dataset.samples[idx].filename for idx in val_indices]
-    model, payload = load_model(checkpoint, device)
+    model, payload = load_model(checkpoint, device, use_ema=use_ema)
     assert payload.get("train_hash") == filename_hash(train_names)
     assert payload.get("val_hash") == filename_hash(val_names)
 
@@ -102,8 +105,9 @@ def evaluate(checkpoint: Path) -> dict[str, float]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, default=config.CHECKPOINT_DIR / "best.pt")
+    parser.add_argument("--use-ema", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
-    evaluate(args.checkpoint)
+    evaluate(args.checkpoint, use_ema=args.use_ema)
 
 
 if __name__ == "__main__":

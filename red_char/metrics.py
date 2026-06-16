@@ -21,10 +21,21 @@ def batch_metrics(char_logits: torch.Tensor, color_logits: torch.Tensor, char_ta
     }
 
 
-def compute_loss(char_logits: torch.Tensor, color_logits: torch.Tensor, char_targets: torch.Tensor, color_targets: torch.Tensor, color_weight: float = config.COLOR_LOSS_WEIGHT) -> torch.Tensor:
+def compute_loss(
+    char_logits: torch.Tensor,
+    color_logits: torch.Tensor,
+    char_targets: torch.Tensor,
+    color_targets: torch.Tensor,
+    color_weight: float = config.COLOR_LOSS_WEIGHT,
+    label_smoothing: float = config.LABEL_SMOOTHING,
+) -> torch.Tensor:
+    # Light label smoothing on the 36-way character head only. The binary
+    # colour head is left un-smoothed so its confident red/non-red boundary
+    # is preserved.
     char_loss = torch.nn.functional.cross_entropy(
         char_logits.reshape(-1, config.NUM_CHARS),
         char_targets.reshape(-1),
+        label_smoothing=label_smoothing,
     )
     color_loss = torch.nn.functional.cross_entropy(
         color_logits.reshape(-1, config.NUM_COLORS),
