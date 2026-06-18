@@ -680,3 +680,189 @@ CUDA_VISIBLE_DEVICES=1 PYTHONUNBUFFERED=1 conda run --no-capture-output -n inter
 - 剩余错误全部为 `char_only`
 - 颜色预测已经达到或接近 100%
 - 需要通过红字加权训练、结构差异模型或更强字符专注策略继续提升
+
+## Kaggle 测试机反馈与本地后处理实验
+
+截至 2026-06-17，`submission_widemix5_9904.csv` 在 Kaggle 测试集得分为 **98 分**，低于验证集 `99.04%`。
+
+**现象分析**：
+
+- 最终提交长度分布：`{1: 1268, 2: 1305, 3: 1232, 4: 1195}`
+- `submission_sample.csv` 长度分布：`{0: 150, 1: 1316, 2: 1304, 3: 1156, 4: 1070, 5: 4}`
+- 内置预测阶段曾警告：empty-label count 和 length-5 count 可疑。
+
+**假设**：
+
+测试集可能包含真实的 0 红字符样本，而当前模型/验证切分没有覆盖 0 红和 5 红极端长度，导致最终提交没有产生空标签，从而拉低 Kaggle 分数。
+
+**本地尝试**：
+
+- 新增 `red_char/calibrate_extreme_lengths.py`
+- 根据测试图像红色像素证据，将红像素最低的一批样本校准为空标签。
+- 生成候选：
+  - `submissions/submission_widemix5_empty050.csv`
+  - `submissions/submission_widemix5_empty100.csv`
+  - `submissions/submission_widemix5_empty150.csv`
+  - `submissions/submission_widemix5_empty200.csv`
+
+**理由**：
+
+空红样本在图像上应具有极低红色像素数量。该策略不改动大部分字符预测，只校准极端长度先验，是在缺少正式 checkpoint/logits 的本地条件下，最快可提交验证的低成本尝试。
+
+**提交状态**：
+
+- 已在本地项目虚拟环境 `.kaggle_venv` 安装 Kaggle CLI。
+- 尝试提交 `submission_widemix5_empty150.csv`：
+  - message：`score98 empty150 red-pixel calibration`
+  - 结果：Kaggle public score 为 `0.95040`
+- 对照 baseline：
+  - `submission_widemix5_9904.csv`：`0.98000`
+  - `submission_widemix5_empty150.csv`：`0.95040`
+
+**结论**：
+
+将红像素最低的 150 个样本强制置为空标签会显著降分，说明测试集 public 部分并不存在大量需要置空的样本，或者该红像素阈值不能可靠识别空红样本。停止继续提交 `empty050 / empty100 / empty200`，避免浪费提交配额；下一步转向本地训练/模型推理改进，而不是极端长度后处理。
+
+## 本地训练恢复
+
+本地环境检查：
+
+- PyTorch：`2.11.0+cu128`
+- CUDA：可用
+- GPU 数量：1
+- 本地已有 checkpoint 仅为 epoch=1 smoke 产物，不能复用为最终提交模型。
+
+**下一步尝试**：
+
+启动本地正式训练 `local_wide_seed51`：
+
+- model_size：`wide`
+- seed：`51`
+- augment：启用
+- red_char_weight：`2.5`
+- epochs：`50`
+
+**理由**：
+
+服务器阶段 wide 模型在验证集上提供了明显增益，且与 base/red-weight 模型形成互补；本地具备 CUDA 后，优先复现 wide + red-weight 的单模型能力，再决定是否继续训练多个 seed 做本地 ensemble。
+
+**本地启动排障与正式启动（2026-06-17）**：
+
+- 先跑本地验证：
+  - `python -m unittest -v test_ensemble.py test_augmentation.py`
+  - 结果：25 项测试通过
+  - `py_compile` 通过
+  - `git diff --check` 通过
+- 首次后台训练尝试使用 `Start-Process -ArgumentList @(...)`，进程快速退出且无日志。
+- 诊断发现：PowerShell `Start-Process` 的数组参数会破坏带空格的 `python -c` 参数；随后改为单字符串参数。
+- 继续发现：`run_training.ps1` 使用 UTF-8 无 BOM 时，Windows PowerShell 5 会把脚本内中文绝对路径解析乱码。
+- 修正：包装脚本改用 `$PSScriptRoot` 和相对路径，避免中文路径字面量。
+- 继续发现：PowerShell 5 会把 native stderr/tqdm 输出当成 `NativeCommandError`，导致训练被包装脚本中断。
+- 最终修正：包装脚本改为通过 `cmd.exe /c` 执行 `python -u train.py ... 1> console.log 2> console.err.log`，PowerShell 只负责启动和记录 exit code。
+- 正式训练启动：
+  - run-name：`local_wide_seed51`
+  - PID：包装 PowerShell `69412`，Python `23680`
+  - 命令参数：`--epochs 50 --augment --seed 51 --run-name local_wide_seed51 --red-char-weight 2.5 --model-size wide --num-workers 0 --no-cache-in-ram`
+  - 日志：`red_char/outputs/runs/local_wide_seed51/console.log`
+  - stderr：`red_char/outputs/runs/local_wide_seed51/console.err.log`
+
+## 第二阶段本地训练与架构实现（2026-06-18）
+
+### 本地 wide baseline 实测
+
+由于 Codex 当前 shell 中普通后台子进程会在 shell 返回后被回收，正式训练改用 `Start-Process -Wait` 方式前台托管，并把 stdout/stderr 重定向到 run 目录。
+
+本地 `wide + light + red_char_weight=2.5 + seed51` 训练结果：
+
+- `local_wide_seed51_cache_5ep_20260618`
+  - best epoch：`5`
+  - val exact：`0.9532`
+- `local_wide_seed51_cache_10ep_20260618`
+  - best epoch：`10`
+  - val exact：`0.9752`
+- `local_wide_seed51_cache_20ep_20260618`
+  - best epoch：`19`
+  - val exact：`0.9792`
+- `local_wide_seed51_cache_50ep_20260618`
+  - best epoch：`39`
+  - val exact：`0.9836`
+  - best checkpoint：`red_char/outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt`
+
+对 `10ep best + 20ep best` 做本地等权小集成：
+
+- 搜索日志：`red_char/outputs/logs/local_wide_seed51_10_20_ensemble_search.csv`
+- best val exact：`0.9800`
+
+结论：同一 seed 的不同 epoch checkpoint 有少量互补，但单靠同结构 wide 无法达到第二阶段目标 `99.2%`，仍需要架构多样性。
+
+### 第二阶段源码改动
+
+已在 `main` 上提交：
+
+- commit：`14b2624 Add stage2 red character architectures`
+- 范围：
+  - `red_char/model.py`
+  - `red_char/config.py`
+  - `red_char/dataset.py`
+  - `red_char/train.py`
+  - `red_char/test_ensemble.py`
+  - `red_char/test_augmentation.py`
+
+具体能力：
+
+- `--model-size` 扩展为：`base | wide | k5 | resblock | deep3`
+- 新增 `k5`：前两个卷积块使用 5x5 卷积，参数量约 `6,106,526`
+- 新增 `resblock`：残差块替代普通 ConvBlock，参数量约 `6,034,366`
+- 新增 `deep3`：3 个卷积块、保留更大空间特征图，参数量约 `24,182,398`
+- 新增 `AUGMENT_PRESETS`：
+  - `light`：保持旧行为，degrees=3, translate=5%, noise=0.01
+  - `medium`：degrees=5, translate=8%, noise=0.02
+  - `strong`：degrees=8, translate=10%, noise=0.03, black/white erasing
+- `train.py` 新增 `--augment-preset`，checkpoint `config` 和 `metrics` 记录 `augment_preset`
+- 保留此前 `--num-workers` 支持，便于 Windows 本地训练使用 `--num-workers 0`
+
+### 验证结果
+
+代码验证：
+
+```powershell
+cd D:\Learing\一路北航\机器学习\ML-TeamHW\red_char
+python -m unittest discover -p "test*.py"
+python model.py
+python train.py --help
+```
+
+结果：
+
+- `unittest discover`：32 项测试通过
+- `model.py` 输出 shape 全部正确：
+  - base：`torch.Size([2, 5, 36])`, `torch.Size([2, 5, 2])`, params `5,990,302`
+  - wide：params `13,402,126`
+  - k5：params `6,106,526`
+  - resblock：params `6,034,366`
+  - deep3：params `24,182,398`
+- `train.py --help` 已显示：
+  - `--model-size {base,wide,k5,resblock,deep3}`
+  - `--augment-preset {light,medium,strong}`
+
+64 样本过拟合 sanity：
+
+- `sanity_k5_seed52_20260618`
+  - 命令：`python -u train.py --overfit-sanity --seed 52 --run-name sanity_k5_seed52_20260618 --model-size k5 --num-workers 0 --cache-in-ram`
+  - 结果：epoch 94 通过，loss `< 0.01` 且 exact `1.0`
+- `sanity_resblock_seed54_20260618`
+  - 命令：`python -u train.py --overfit-sanity --seed 54 --run-name sanity_resblock_seed54_20260618 --model-size resblock --num-workers 0 --cache-in-ram`
+  - 结果：epoch 92 通过，loss `< 0.01` 且 exact `1.0`
+- `sanity_deep3_seed56_20260618`
+  - 命令：`python -u train.py --overfit-sanity --seed 56 --run-name sanity_deep3_seed56_20260618 --model-size deep3 --num-workers 0 --cache-in-ram`
+  - 结果：epoch 92 通过，loss `< 0.01` 且 exact `1.0`
+
+下一步训练优先级：
+
+1. `local_k5_seed52`
+2. `local_k5_seed53`
+3. `local_resblock_seed54`
+4. `local_resblock_seed55`
+5. `local_deep3_seed56`
+
+训练完成后再汇总 `local_wide_seed51_cache_50ep_20260618` 与新架构 checkpoints 做 ensemble/beam 搜索。
