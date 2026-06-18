@@ -866,3 +866,59 @@ python train.py --help
 5. `local_deep3_seed56`
 
 训练完成后再汇总 `local_wide_seed51_cache_50ep_20260618` 与新架构 checkpoints 做 ensemble/beam 搜索。
+
+### 本地 k5 训练、beam 搜索与 Kaggle 提交（2026-06-18）
+
+本地 `k5 + light + red_char_weight=2.5 + seed52` 训练已完成：
+
+- run-name：`local_k5_seed52`
+- 命令：`python -u train.py --epochs 50 --augment --seed 52 --run-name local_k5_seed52 --red-char-weight 2.5 --model-size k5 --augment-preset light --num-workers 0 --cache-in-ram`
+- best epoch：`41`
+- val exact：`0.9768`
+- char acc：`0.9828`
+- color acc：`0.99984`
+- joint pos acc：`0.98272`
+- best checkpoint：`red_char/outputs/runs/local_k5_seed52/checkpoints/best.pt`
+
+等权集成搜索：
+
+- 候选：
+  - `local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt`
+  - `local_wide_seed51_cache_20ep_20260618/checkpoints/best.pt`
+  - `local_wide_seed51_cache_10ep_20260618/checkpoints/best.pt`
+  - `local_k5_seed52/checkpoints/best.pt`
+- 搜索日志：`red_char/outputs/logs/local_stage2_wide_k5_ensemble_search.csv`
+- 最佳组合：`wide50 + wide20 + k5`
+- best val exact：`0.9848`
+
+beam 分头加权搜索：
+
+- 命令：`python beam_weight_search.py --checkpoints outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_20ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --coarse-step 0.1 --fine-step 0.02 --radius 0.08 --top-k 20 --output outputs/logs/local_stage2_wide_k5_beam_weight_search.csv`
+- 最优 char weights：`0.52 | 0.24 | 0.24`
+- 最优 color weights：`0 | 0.38 | 0.62`
+- best val exact：`0.9860`
+- char acc：`0.98904`
+- color acc：`1.0`
+- joint pos acc：`0.98904`
+- 搜索日志：`red_char/outputs/logs/local_stage2_wide_k5_beam_weight_search.csv`
+
+submission 生成与格式检查：
+
+- 输出：`submissions/submission_local_stage2_wide50_wide20_k5_beam.csv`
+- 根目录提交副本：`submission.csv`
+- 预测长度分布：`{1: 1268, 2: 1305, 3: 1234, 4: 1193}`
+- 格式检查通过：表头、行数、id 顺序、字符集、无 BOM、无 CRLF、无 nan 均通过
+- 备注：脚本基于旧 `submission_sample` 的空标签/长度 5 期望给出 warning；但用户已确认测试集不存在 0 红和 5 红样本，本次长度分布不按该 warning 判失败。
+
+Kaggle 提交结果：
+
+- 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 wide50 wide20 k5 beam"`
+- ref：`53801763`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.97820`
+
+结论：
+
+- 这一本地 `wide50 + wide20 + k5` beam 组合没有超过历史 `submission_widemix5_9904.csv` 的 `0.98000`。
+- 本地 val 从 `0.9848` 到 `0.9860` 有提升，但 Kaggle public 反而下降，说明单个 k5 seed 暂时没有提供足够测试集泛化收益。
+- 下一步不应围绕该组合继续微调权重；更值得继续训练 `resblock/deep3` 或补齐第二个 k5 seed，再与历史 widemix5/服务器 checkpoint 做全量搜索。
