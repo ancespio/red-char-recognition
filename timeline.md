@@ -1099,3 +1099,91 @@ submission 生成与 Kaggle 结果：
 - 第二个 `v2hi` seed 让本地 beam 从 `0.9880` 提升到 `0.9896`，Kaggle public 从 `0.98040` 提升到 `0.98080`，方向有效但增幅很小。
 - 目前本分支已确认的自有最好 Kaggle public 是 `0.98080`；`0.98520` 属于他人提交，不纳入本分支成绩。
 - 距离 `99+` 目标仍有显著差距。下一轮不应继续只堆同类 v2hi seed；优先迁移并本地验证高分分支的 `glyph reranker` 最小闭环，或用高置信 pseudo-label 做 self-training，再提交验证。
+
+### 本地 glyph reranker 最小闭环与 Kaggle 提交（2026-06-19）
+
+目标：
+
+- 继续参考 `origin/feature/glyph-reranker-98.72` 的代码思路，但不使用他人 submission 或 checkpoint。
+- 在 main 分支实现一个本地可训练、可评估、可提交的 glyph reranker 最小闭环。
+
+代码实现：
+
+- 新增 `red_char/glyph.py`
+  - `extract_glyph_crops()`：从 5 个名义字符位置切局部 crop。
+  - `extract_glyph_crop()`：只切单个位置，避免 `GlyphDataset.__getitem__` 每次重复切 5 个 crop。
+  - `GlyphDataset`：把全图训练样本展开为 position-level glyph 样本，可选 red-only。
+  - `GlyphNet`：局部字符分类器，支持 `input_mode=rgb|red`、`hires`、`head_mode=flat|gap`。
+  - `load_glyph_model()` / `glyph_probabilities()`：供评估和预测复用。
+- 新增 `red_char/train_glyph.py`
+  - 支持 `--run-name`、`--input-mode`、`--hires`、`--head-mode`、`--crop-width`、`--num-workers`、`--resume`、`--augment/--no-augment`。
+  - checkpoint 写入 `outputs/runs/<run-name>/checkpoints/{best,last}.pt`。
+- 新增 `red_char/eval_reranker.py`
+  - 支持四模型主干的 `--char-weights` / `--color-weights`。
+  - 提供 `rerank()` 和 `selective_rerank()`。
+- 新增 `red_char/predict_reranker.py`
+  - 用主模型 ensemble + glyph 模型生成 submission。
+  - 复用 `predict.py` 的 submission 写入和格式校验。
+- 新增 `red_char/test_glyph_reranker.py`
+  - 覆盖 crop shape、单 crop 与批量 crop 一致性、GlyphNet 输出 shape、checkpoint 加载、rerank/selective_rerank 行为、三个脚本 parser。
+
+TDD / 验证：
+
+- 初始 RED：
+  - `python -m unittest test_glyph_reranker.py` 因缺少 `glyph` / `eval_reranker` 模块失败。
+  - parser 扩展阶段分别因缺少 `predict_reranker.py`、`train_glyph.py`、`--resume`、`--no-augment` 失败。
+- GREEN：
+  - `python -m unittest test_glyph_reranker.py`：9 项通过。
+
+训练与排障：
+
+- 慢速候选：`local_glyph_seed63_red_hires_gap`
+  - 命令：`python -u train_glyph.py --epochs 20 --seed 63 --run-name local_glyph_seed63_red_hires_gap --input-mode red --hires --head-mode gap --crop-width 72 --num-workers 0 --cache-in-ram`
+  - 工具 2 小时超时，完整日志只到 epoch `6`。
+  - best val_acc：`0.95314`
+  - 结论：`red + hires + gap` 太慢且局部精度不足，不继续作为提交候选。
+- 性能修复：
+  - `GlyphDataset.__getitem__` 从“切 5 个 crop 再取 1 个”改为 `extract_glyph_crop()` 只切目标位置。
+  - 无增强 batch 512 单步训练探针约 `0.5s` 级别，可进入正式训练。
+- 可用候选：`local_glyph_seed65_red_gap_noaug`
+  - 初始命令：`python -u train_glyph.py --epochs 10 --seed 65 --run-name local_glyph_seed65_red_gap_noaug --input-mode red --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --no-augment`
+  - 10 epoch best val_acc：`0.99230`
+  - 续训命令：`python -u train_glyph.py --epochs 20 --seed 65 --run-name local_glyph_seed65_red_gap_noaug --input-mode red --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --no-augment --resume outputs/runs/local_glyph_seed65_red_gap_noaug/checkpoints/last.pt`
+  - best epoch：`13`
+  - best red-glyph val_acc：`0.99326`
+  - 后续 epoch 出现不稳定/退化，提交使用 `best.pt`。
+
+本地 reranker 评估：
+
+- 主模型仍使用四模型 beam：
+  - `local_v2hi_seed61`
+  - `local_v2hi_seed62`
+  - `local_wide_seed51_cache_50ep_20260618`
+  - `local_k5_seed52`
+- 主模型权重：
+  - char：`0.20 | 0.20 | 0.42 | 0.18`
+  - color：`0 | 0.34 | 0 | 0.66`
+- glyph checkpoint：`red_char/outputs/runs/local_glyph_seed65_red_gap_noaug/checkpoints/best.pt`
+- base exact：`2474/2500 = 0.9896`
+- alpha rerank 最优：`top_k=2, alpha=0.70`
+- rerank exact：`2475/2500 = 0.9900`
+- selective rerank 最优：无提升，仍为 `2474/2500 = 0.9896`
+
+submission 生成与 Kaggle 结果：
+
+- 输出：`submissions/submission_local_stage2_glyph_rerank_alpha070.csv`
+- 根目录提交副本：`submission.csv`
+- 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 glyph rerank alpha070"`
+- ref：`53817507`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98200`
+
+结论：
+
+- 本地 glyph reranker 最小闭环有效：本地 exact 从 `0.9896` 到 `0.9900`，Kaggle public 从 `0.98080` 到 `0.98200`。
+- 这仍低于目标 `99+`，但说明局部字符 reranker 比继续堆 v2hi seed 更有 public 收益。
+- 下一步优先方向：
+  1. 训练第二个 glyph seed，并做 glyph checkpoint ensemble；
+  2. 尝试 `all_glyphs + noaug` 或轻量 medium augmentation，但避免已验证过慢的 `hires`；
+  3. 在 reranker 上增加 per-position / confusion-group 选择，而不是全局 alpha。
