@@ -1030,3 +1030,72 @@ submission 生成与 Kaggle 结果：
   1. 补 `v2hi` 第二/第三 seed，验证是否带来稳定集成收益；
   2. 迁移 glyph 局部 reranker 的最小闭环；
   3. 若时间允许，再做 pseudo-label self-training。
+
+### 第二个 v2hi seed、四模型 beam 与 Kaggle 提交（2026-06-18）
+
+重要基线说明：
+
+- `submission_sample.csv -> 0.98520` 是他人提交，不作为本分支成绩或融合来源。
+- 本轮仍只使用本地训练 checkpoint 生成 submission；他人高分分支只作为代码思路参考。
+
+`local_v2hi_seed62` 训练：
+
+- 初始命令：`python -u train.py --epochs 40 --augment --seed 62 --run-name local_v2hi_seed62 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram`
+- 初始训练因工具 2 小时超时中断，实际已跑到 epoch `36`，checkpoint 正常写入。
+- resume 命令：`python -u train.py --epochs 40 --augment --seed 62 --run-name local_v2hi_seed62 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram --resume outputs/runs/local_v2hi_seed62/checkpoints/last.pt`
+- 训练完成到 epoch `40`。
+- best epoch：`39`
+- best val exact：`0.9836`
+- char acc：`0.98760`
+- color acc：`1.00000`
+- joint pos acc：`0.98760`
+- best checkpoint：`red_char/outputs/runs/local_v2hi_seed62/checkpoints/best.pt`
+
+四模型等权搜索：
+
+- 候选：
+  - `local_v2hi_seed61/checkpoints/best.pt`
+  - `local_v2hi_seed62/checkpoints/best.pt`
+  - `local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt`
+  - `local_k5_seed52/checkpoints/best.pt`
+- 搜索日志：`red_char/outputs/logs/local_stage2_v2hi2_wide_k5_ensemble_search.csv`
+- 最佳组合：四模型全量等权。
+- best val exact：`0.9884`
+- char acc：`0.99056`
+- color acc：`0.99992`
+- joint pos acc：`0.99048`
+
+四模型 beam 分头加权搜索：
+
+- 命令：`python beam_weight_search.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --coarse-step 0.1 --fine-step 0.02 --radius 0.08 --top-k 20 --output outputs/logs/local_stage2_v2hi2_wide_k5_beam_weight_search.csv`
+- 最优 char weights：`0.20 | 0.20 | 0.42 | 0.18`
+- 最优 color weights：`0 | 0.34 | 0 | 0.66`
+- best val exact：`0.9896`
+- char acc：`0.99096`
+- color acc：`1.00000`
+- joint pos acc：`0.99096`
+- 搜索日志：`red_char/outputs/logs/local_stage2_v2hi2_wide_k5_beam_weight_search.csv`
+
+独立 evaluate 复核：
+
+- 命令：`python evaluate.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --char-weights 0.2 0.2 0.42 0.18 --color-weights 0 0.34 0 0.66`
+- val exact：`0.9896000001907349`
+- char acc：`0.9909600052833557`
+- color acc：`0.9999999953269958`
+- 导出验证错误数：`26`
+
+submission 生成与 Kaggle 结果：
+
+- 输出：`submissions/submission_local_stage2_v2hi2_wide_k5_beam.csv`
+- 根目录提交副本：`submission.csv`
+- 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 v2hi2 wide k5 beam"`
+- ref：`53809652`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98080`
+
+结论：
+
+- 第二个 `v2hi` seed 让本地 beam 从 `0.9880` 提升到 `0.9896`，Kaggle public 从 `0.98040` 提升到 `0.98080`，方向有效但增幅很小。
+- 目前本分支已确认的自有最好 Kaggle public 是 `0.98080`；`0.98520` 属于他人提交，不纳入本分支成绩。
+- 距离 `99+` 目标仍有显著差距。下一轮不应继续只堆同类 v2hi seed；优先迁移并本地验证高分分支的 `glyph reranker` 最小闭环，或用高置信 pseudo-label 做 self-training，再提交验证。
