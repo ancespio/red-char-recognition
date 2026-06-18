@@ -48,6 +48,27 @@ AMP = True
 AUGMENT_DEGREES = 3.0
 AUGMENT_TRANSLATE = (0.05, 0.05)
 AUGMENT_NOISE_STD = 0.01
+AUGMENT_PRESETS = {
+    "light": {
+        "degrees": AUGMENT_DEGREES,
+        "translate": AUGMENT_TRANSLATE,
+        "noise_std": AUGMENT_NOISE_STD,
+        "erase_scale": None,
+    },
+    "medium": {
+        "degrees": 5.0,
+        "translate": (0.08, 0.08),
+        "noise_std": 0.02,
+        "erase_scale": None,
+    },
+    "strong": {
+        "degrees": 8.0,
+        "translate": (0.10, 0.10),
+        "noise_std": 0.03,
+        "erase_scale": (0.02, 0.05),
+    },
+}
+MODEL_SIZES = ("base", "wide", "k5", "resblock", "deep3")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

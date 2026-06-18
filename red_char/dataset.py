@@ -129,6 +129,8 @@ class TrainAugmentation:
         degrees: float = config.AUGMENT_DEGREES,
         translate: tuple[float, float] = config.AUGMENT_TRANSLATE,
         noise_std: float = config.AUGMENT_NOISE_STD,
+        erase_scale: tuple[float, float] | None = None,
+        erase_prob: float = 0.25,
     ) -> None:
         self.affine = RandomAffine(
             degrees=degrees,
@@ -137,12 +139,39 @@ class TrainAugmentation:
             fill=1.0,
         )
         self.noise_std = noise_std
+        self.erase_scale = erase_scale
+        self.erase_prob = erase_prob
+
+    @classmethod
+    def from_preset(cls, preset: str) -> "TrainAugmentation":
+        try:
+            values = config.AUGMENT_PRESETS[preset]
+        except KeyError as exc:
+            raise ValueError(f"unknown augment preset: {preset}") from exc
+        return cls(**values)
 
     def __call__(self, image: torch.Tensor) -> torch.Tensor:
         augmented = self.affine(image)
         if self.noise_std > 0:
             augmented = augmented + torch.randn_like(augmented) * self.noise_std
-        return augmented.clamp_(0.0, 1.0)
+        augmented = augmented.clamp_(0.0, 1.0)
+        if self.erase_scale is not None and torch.rand(()) < self.erase_prob:
+            augmented = self._erase(augmented)
+        return augmented
+
+    def _erase(self, image: torch.Tensor) -> torch.Tensor:
+        channels, height, width = image.shape
+        min_scale, max_scale = self.erase_scale
+        area = height * width
+        erase_area = int(area * float(torch.empty(()).uniform_(min_scale, max_scale)))
+        erase_h = max(1, min(height, int(erase_area ** 0.5)))
+        erase_w = max(1, min(width, erase_area // erase_h))
+        top = int(torch.randint(0, height - erase_h + 1, ()).item())
+        left = int(torch.randint(0, width - erase_w + 1, ()).item())
+        fill_value = float(torch.randint(0, 2, ()).item())
+        erased = image.clone()
+        erased[:, top : top + erase_h, left : left + erase_w] = fill_value
+        return erased
 
 
 class TransformSubset(Dataset):
@@ -190,7 +219,7 @@ def _loader_kwargs(shuffle: bool) -> dict:
 def build_dataloaders(cache_in_ram: bool = config.CACHE_IN_RAM, augment: bool = False) -> tuple[DataLoader, DataLoader, list[str], list[str]]:
     dataset = build_train_dataset(cache_in_ram=cache_in_ram)
     train_indices, val_indices = deterministic_split_indices(len(dataset))
-    train_transform = TrainAugmentation() if augment else None
+    train_transform = TrainAugmentation.from_preset("light") if augment else None
     train_loader = DataLoader(TransformSubset(dataset, train_indices, train_transform), **_loader_kwargs(shuffle=True))
     val_loader = DataLoader(TransformSubset(dataset, val_indices), **_loader_kwargs(shuffle=False))
     train_names = [dataset.samples[idx].filename for idx in train_indices]

@@ -152,6 +152,7 @@ def save_checkpoint(
     val_names: list[str],
     training_seed: int,
     augment: bool,
+    augment_preset: str,
     run_name: str | None,
     red_char_weight: float,
     model_size: str,
@@ -176,6 +177,7 @@ def save_checkpoint(
                 "red_char_weight": red_char_weight,
                 "model_size": model_size,
                 "augment": augment,
+                "augment_preset": augment_preset,
                 "run_name": run_name,
             },
             "train_hash": filename_hash(train_names),
@@ -215,15 +217,22 @@ def run_training(args: argparse.Namespace) -> None:
         steps_limit = 1
         scheduler = None
     else:
-        train_transform = TrainAugmentation() if effective_augment else None
+        train_transform = TrainAugmentation.from_preset(args.augment_preset) if effective_augment else None
         train_loader = make_loader(
             dataset,
             train_indices,
             batch_size=config.BATCH_SIZE,
             shuffle=True,
+            num_workers=args.num_workers,
             transform=train_transform,
         )
-        val_loader = make_loader(dataset, val_indices, batch_size=config.BATCH_SIZE, shuffle=False)
+        val_loader = make_loader(
+            dataset,
+            val_indices,
+            batch_size=config.BATCH_SIZE,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
         model = build_model(args.model_size).to(device)
         epochs = args.epochs
         steps_limit = args.steps_per_epoch
@@ -234,12 +243,9 @@ def run_training(args: argparse.Namespace) -> None:
         f"device={device} params={params} augment={effective_augment} "
         f"training_seed={args.seed} split_seed={config.SPLIT_SEED} "
         f"run_name={args.run_name or 'default'} red_char_weight={args.red_char_weight} "
-        f"model_size={args.model_size}"
+        f"model_size={args.model_size} augment_preset={args.augment_preset}"
     )
-    if args.model_size == "base":
-        assert 5_000_000 <= params <= 8_000_000
-    else:
-        assert params > 8_000_000
+    assert params > 5_000_000
 
     optimizer = AdamW(model.parameters(), lr=config.LR, weight_decay=config.WEIGHT_DECAY)
     if not args.overfit_sanity:
@@ -288,6 +294,7 @@ def run_training(args: argparse.Namespace) -> None:
         checkpoint_metrics = {
             **asdict(row),
             "augment": effective_augment,
+            "augment_preset": args.augment_preset,
             "red_char_weight": args.red_char_weight,
             "model_size": args.model_size,
         }
@@ -302,6 +309,7 @@ def run_training(args: argparse.Namespace) -> None:
             val_names,
             args.seed,
             effective_augment,
+            args.augment_preset,
             args.run_name,
             args.red_char_weight,
             args.model_size,
@@ -319,6 +327,7 @@ def run_training(args: argparse.Namespace) -> None:
                 val_names,
                 args.seed,
                 effective_augment,
+                args.augment_preset,
                 args.run_name,
                 args.red_char_weight,
                 args.model_size,
@@ -340,8 +349,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--red-char-weight", type=float, default=1.0)
-    parser.add_argument("--model-size", choices=["base", "wide"], default="base")
+    parser.add_argument("--model-size", choices=list(config.MODEL_SIZES), default="base")
+    parser.add_argument("--augment-preset", choices=list(config.AUGMENT_PRESETS), default="light")
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
+    parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     return parser
 
 

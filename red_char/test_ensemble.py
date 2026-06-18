@@ -106,6 +106,25 @@ class EnsembleTests(unittest.TestCase):
 
         self.assertEqual(args.model_size, "wide")
 
+    def test_train_parser_accepts_stage2_model_sizes(self) -> None:
+        for model_size in ("base", "wide", "k5", "resblock", "deep3"):
+            with self.subTest(model_size=model_size):
+                args = build_train_parser().parse_args(["--model-size", model_size])
+
+                self.assertEqual(args.model_size, model_size)
+
+    def test_train_parser_accepts_augment_presets(self) -> None:
+        for preset in ("light", "medium", "strong"):
+            with self.subTest(preset=preset):
+                args = build_train_parser().parse_args(["--augment-preset", preset])
+
+                self.assertEqual(args.augment_preset, preset)
+
+    def test_train_parser_accepts_num_workers_override(self) -> None:
+        args = build_train_parser().parse_args(["--num-workers", "0"])
+
+        self.assertEqual(args.num_workers, 0)
+
     def test_wide_model_preserves_output_shapes_and_adds_capacity(self) -> None:
         images = torch.randn(2, 3, config.IMAGE_HEIGHT, config.IMAGE_WIDTH)
 
@@ -116,6 +135,18 @@ class EnsembleTests(unittest.TestCase):
         self.assertEqual(char_logits.shape, (2, config.NUM_POSITIONS, config.NUM_CHARS))
         self.assertEqual(color_logits.shape, (2, config.NUM_POSITIONS, config.NUM_COLORS))
         self.assertGreater(count_parameters(wide), count_parameters(base))
+
+    def test_stage2_model_sizes_preserve_output_shapes(self) -> None:
+        images = torch.randn(2, 3, config.IMAGE_HEIGHT, config.IMAGE_WIDTH)
+
+        for model_size in ("k5", "resblock", "deep3"):
+            with self.subTest(model_size=model_size):
+                model = build_model(model_size)
+                char_logits, color_logits = model(images)
+
+                self.assertEqual(char_logits.shape, (2, config.NUM_POSITIONS, config.NUM_CHARS))
+                self.assertEqual(color_logits.shape, (2, config.NUM_POSITIONS, config.NUM_COLORS))
+                self.assertGreater(count_parameters(model), 5_000_000)
 
     def test_load_models_uses_checkpoint_model_size(self) -> None:
         wide = build_model("wide")
@@ -133,6 +164,23 @@ class EnsembleTests(unittest.TestCase):
 
         self.assertEqual(count_parameters(models[0]), count_parameters(wide))
         self.assertEqual(payloads[0]["config"]["model_size"], "wide")
+
+    def test_load_models_uses_stage2_checkpoint_model_size(self) -> None:
+        model = build_model("resblock")
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "resblock.pt"
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "config": {"model_size": "resblock"},
+                },
+                checkpoint,
+            )
+
+            models, payloads = load_models([checkpoint], torch.device("cpu"))
+
+        self.assertEqual(count_parameters(models[0]), count_parameters(model))
+        self.assertEqual(payloads[0]["config"]["model_size"], "resblock")
 
     def test_red_char_weight_one_matches_legacy_loss(self) -> None:
         char_logits = torch.randn(2, config.NUM_POSITIONS, config.NUM_CHARS)
