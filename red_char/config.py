@@ -68,7 +68,7 @@ AUGMENT_PRESETS = {
         "erase_scale": (0.02, 0.05),
     },
 }
-MODEL_SIZES = ("base", "wide", "k5", "resblock", "deep3")
+MODEL_SIZES = ("base", "wide", "k5", "resblock", "deep3", "v2hi")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

@@ -922,3 +922,111 @@ Kaggle 提交结果：
 - 这一本地 `wide50 + wide20 + k5` beam 组合没有超过历史 `submission_widemix5_9904.csv` 的 `0.98000`。
 - 本地 val 从 `0.9848` 到 `0.9860` 有提升，但 Kaggle public 反而下降，说明单个 k5 seed 暂时没有提供足够测试集泛化收益。
 - 下一步不应围绕该组合继续微调权重；更值得继续训练 `resblock/deep3` 或补齐第二个 k5 seed，再与历史 widemix5/服务器 checkpoint 做全量搜索。
+
+### 参考高分分支并迁移 v2hi 主模型（2026-06-18）
+
+用户提示项目中存在他人高分分支可参考，但 `0.98520` 提交属于他人，不作为本方案基线。本次只参考代码思路，不使用他人 submission。
+
+已 fetch 到远端分支：
+
+- `origin/feature/glyph-reranker-98.72`
+- 分支报告显示平台最佳 `0.9872`，核心路线为 `v2hi` 高分辨率主模型 + pseudo-label + glyph reranker。
+- 该分支会删除本分支的 `timeline.md`、测试与 submission 记录，不能直接 merge；只读参考关键实现。
+
+本分支已按 TDD 迁移最小闭环：
+
+- 先在 `red_char/test_ensemble.py` 增加 `v2hi` 架构和 parser 期望。
+- RED 验证失败原因：
+  - `build_model("v2hi")` 抛出 `ValueError: unknown model_size: v2hi`
+  - `--model-size v2hi` 不在 argparse choices 中
+- 实现：
+  - `red_char/config.py`：`MODEL_SIZES` 增加 `v2hi`
+  - `red_char/model.py`：新增 `SqueezeExcite`、`ResidualSEStage`、`CoordConv2d`、`V2HiRedCharNet`
+  - `v2hi` 结构保留 3 次下采样，最终特征图约 `7x25`，再用 `1x1` 降通道后 Flatten，目标是保留更多字符细节。
+- GREEN 验证：
+  - `python -m unittest test_ensemble.EnsembleTests.test_stage2_model_sizes_preserve_output_shapes test_ensemble.EnsembleTests.test_train_parser_accepts_v2hi_model_size`：通过
+  - `python model.py`：通过，`v2hi` 参数量 `7,213,792`
+  - `python -m unittest discover -p "test*.py"`：33 项测试通过
+
+v2hi 64 样本过拟合 sanity：
+
+- run-name：`sanity_v2hi_seed61_20260618`
+- 命令：`python -u train.py --overfit-sanity --seed 61 --run-name sanity_v2hi_seed61_20260618 --model-size v2hi --num-workers 0 --cache-in-ram`
+- 结果：epoch `88` 通过，loss `< 0.01` 且 exact `1.0`
+
+下一步：
+
+- 启动正式 `local_v2hi_seed61` 训练，先用 `40 epochs + light augment + cache_in_ram + num_workers=0`。
+- 如果单模型 val 达到或超过 wide seed51，再纳入现有 wide/k5 做 ensemble/beam；否则继续参考高分分支的 red-threshold / glyph reranker。
+
+### v2hi 正式训练、集成与 Kaggle 提交（2026-06-18）
+
+训练脚本补充：
+
+- 新增 `train.py --resume <checkpoint>`，用于从 `last.pt` 继续训练。
+- TDD 验证：
+  - `test_train_parser_accepts_resume_checkpoint`
+  - `test_restore_training_state_loads_checkpoint_payload`
+- 验证命令：
+  - `python -m unittest test_ensemble.EnsembleTests.test_train_parser_accepts_resume_checkpoint test_ensemble.EnsembleTests.test_restore_training_state_loads_checkpoint_payload`
+  - `python -m unittest discover -p "test*.py"`
+- 结果：35 项测试通过。
+
+`local_v2hi_seed61` 训练：
+
+- 初始命令：`python -u train.py --epochs 40 --augment --seed 61 --run-name local_v2hi_seed61 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram`
+- 由于工具 1 小时超时，初始训练只完成到 epoch `12`，best val exact `0.9532`。
+- resume 命令：`python -u train.py --epochs 40 --augment --seed 61 --run-name local_v2hi_seed61 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram --resume outputs/runs/local_v2hi_seed61/checkpoints/last.pt`
+- 训练完成到 epoch `40`。
+- best epoch：`37`
+- best val exact：`0.9852`
+- char acc：`0.98736`
+- color acc：`0.99992`
+- joint pos acc：`0.98728`
+- best checkpoint：`red_char/outputs/runs/local_v2hi_seed61/checkpoints/best.pt`
+
+等权集成搜索：
+
+- 候选：
+  - `local_v2hi_seed61/checkpoints/best.pt`
+  - `local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt`
+  - `local_wide_seed51_cache_20ep_20260618/checkpoints/best.pt`
+  - `local_k5_seed52/checkpoints/best.pt`
+- 搜索日志：`red_char/outputs/logs/local_stage2_v2hi_wide_k5_ensemble_search.csv`
+- 最佳组合：`v2hi + wide50 + k5`
+- best val exact：`0.9876`
+
+beam 分头加权搜索：
+
+- 命令：`python beam_weight_search.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --coarse-step 0.1 --fine-step 0.02 --radius 0.08 --top-k 20 --output outputs/logs/local_stage2_v2hi_wide_k5_beam_weight_search.csv`
+- 最优 char weights：`0.36 | 0.38 | 0.26`
+- 最优 color weights：`0 | 0.36 | 0.64`
+- best val exact：`0.9880`
+- char acc：`0.99024`
+- color acc：`0.99992`
+- joint pos acc：`0.99016`
+- 搜索日志：`red_char/outputs/logs/local_stage2_v2hi_wide_k5_beam_weight_search.csv`
+
+红色阈值检查：
+
+- 对阈值 `0.10` 到 `0.50` 扫描，val exact 均为 `0.9880`。
+- 结论：这组模型颜色判定稳定，短板仍是字符识别；无需为了本次提交修改 `predict.py` 的红色阈值逻辑。
+
+submission 生成与 Kaggle 结果：
+
+- 输出：`submissions/submission_local_stage2_v2hi_wide_k5_beam.csv`
+- 根目录提交副本：`submission.csv`
+- 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 v2hi wide k5 beam"`
+- ref：`53806255`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98040`
+
+结论：
+
+- `v2hi` 迁移有效：单模型 val `0.9852`，集成 val `0.9880`，Kaggle public 从本分支历史最佳 `0.98000` 小幅提升到 `0.98040`。
+- 距离用户目标 `99+` 仍明显不足。
+- 下一步应继续沿高分分支主线推进，而不是调当前 3 模型权重：
+  1. 补 `v2hi` 第二/第三 seed，验证是否带来稳定集成收益；
+  2. 迁移 glyph 局部 reranker 的最小闭环；
+  3. 若时间允许，再做 pseudo-label self-training。

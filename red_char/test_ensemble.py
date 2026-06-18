@@ -14,7 +14,7 @@ from evaluate import build_parser as build_evaluate_parser
 from metrics import compute_loss, encode_red_sequences
 from model import build_model, count_parameters
 from predict import build_parser as build_predict_parser
-from train import build_parser as build_train_parser, resolve_run_paths
+from train import build_parser as build_train_parser, resolve_run_paths, restore_training_state
 from tta import translate_images, tta_views
 from weighted_ensemble_search import generate_weight_vectors
 
@@ -125,6 +125,11 @@ class EnsembleTests(unittest.TestCase):
 
         self.assertEqual(args.num_workers, 0)
 
+    def test_train_parser_accepts_resume_checkpoint(self) -> None:
+        args = build_train_parser().parse_args(["--resume", "runs/example/checkpoints/last.pt"])
+
+        self.assertEqual(args.resume, Path("runs/example/checkpoints/last.pt"))
+
     def test_wide_model_preserves_output_shapes_and_adds_capacity(self) -> None:
         images = torch.randn(2, 3, config.IMAGE_HEIGHT, config.IMAGE_WIDTH)
 
@@ -139,7 +144,7 @@ class EnsembleTests(unittest.TestCase):
     def test_stage2_model_sizes_preserve_output_shapes(self) -> None:
         images = torch.randn(2, 3, config.IMAGE_HEIGHT, config.IMAGE_WIDTH)
 
-        for model_size in ("k5", "resblock", "deep3"):
+        for model_size in ("k5", "resblock", "deep3", "v2hi"):
             with self.subTest(model_size=model_size):
                 model = build_model(model_size)
                 char_logits, color_logits = model(images)
@@ -181,6 +186,11 @@ class EnsembleTests(unittest.TestCase):
 
         self.assertEqual(count_parameters(models[0]), count_parameters(model))
         self.assertEqual(payloads[0]["config"]["model_size"], "resblock")
+
+    def test_train_parser_accepts_v2hi_model_size(self) -> None:
+        args = build_train_parser().parse_args(["--model-size", "v2hi"])
+
+        self.assertEqual(args.model_size, "v2hi")
 
     def test_red_char_weight_one_matches_legacy_loss(self) -> None:
         char_logits = torch.randn(2, config.NUM_POSITIONS, config.NUM_CHARS)
@@ -331,6 +341,37 @@ class EnsembleTests(unittest.TestCase):
 
             self.assertEqual(paths.checkpoint_dir, output_root / "checkpoints")
             self.assertEqual(paths.log_path, output_root / "logs" / "train_log.csv")
+
+    def test_restore_training_state_loads_checkpoint_payload(self) -> None:
+        model = torch.nn.Linear(2, 1)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.1)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=3)
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "last.pt"
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "epoch": 7,
+                    "metrics": {"exact": 0.75},
+                },
+                checkpoint,
+            )
+            with torch.no_grad():
+                model.weight.add_(10)
+
+            epoch, exact = restore_training_state(
+                checkpoint,
+                model,
+                optimizer,
+                scheduler,
+                torch.device("cpu"),
+            )
+
+        self.assertEqual(epoch, 7)
+        self.assertEqual(exact, 0.75)
+        self.assertTrue(torch.all(model.weight < 10))
 
 
 if __name__ == "__main__":

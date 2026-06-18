@@ -48,6 +48,66 @@ class ResidualBlock(nn.Module):
         return self.pool(self.activation(self.main(x) + self.shortcut(x)))
 
 
+class SqueezeExcite(nn.Module):
+    def __init__(self, channels: int, reduction: int = 8) -> None:
+        super().__init__()
+        hidden = max(channels // reduction, 4)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, hidden),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden, channels),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch, channels, _, _ = x.shape
+        scale = self.pool(x).view(batch, channels)
+        scale = self.fc(scale).view(batch, channels, 1, 1)
+        return x * scale
+
+
+class ResidualSEStage(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, pool: bool = True) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.se = SqueezeExcite(out_channels)
+        self.activation = nn.ReLU(inplace=True)
+        if in_channels == out_channels:
+            self.shortcut = nn.Identity()
+        else:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+            )
+        self.pool = nn.MaxPool2d(2) if pool else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = self.shortcut(x)
+        out = self.activation(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out = self.se(out)
+        out = self.activation(out + identity)
+        return self.pool(out)
+
+
+class CoordConv2d(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels + 2, out_channels, kernel_size=1, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch, _, height, width = x.shape
+        xs = torch.linspace(-1.0, 1.0, width, device=x.device, dtype=x.dtype)
+        ys = torch.linspace(-1.0, 1.0, height, device=x.device, dtype=x.dtype)
+        xs = xs.view(1, 1, 1, width).expand(batch, 1, height, width)
+        ys = ys.view(1, 1, height, 1).expand(batch, 1, height, width)
+        return self.conv(torch.cat([x, xs, ys], dim=1))
+
+
 class RedCharNet(nn.Module):
     def __init__(
         self,
@@ -78,6 +138,49 @@ class RedCharNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         features = self.neck(self.backbone(x))
+        char_logits = self.char_head(features).view(-1, config.NUM_POSITIONS, config.NUM_CHARS)
+        color_logits = self.color_head(features).view(-1, config.NUM_POSITIONS, config.NUM_COLORS)
+        return char_logits, color_logits
+
+
+class V2HiRedCharNet(nn.Module):
+    def __init__(
+        self,
+        widths: tuple[int, int, int, int] = (48, 96, 192, 384),
+        reduce_channels: int = 48,
+        neck_dim: int = 512,
+        dropout: float = 0.3,
+    ) -> None:
+        super().__init__()
+        self.coord = CoordConv2d(3, widths[0] // 2)
+        in_channels = widths[0] // 2
+        pools = (True, True, True, False)
+        stages = []
+        height, width = config.IMAGE_HEIGHT, config.IMAGE_WIDTH
+        for out_channels, pool in zip(widths, pools):
+            stages.append(ResidualSEStage(in_channels, out_channels, pool=pool))
+            in_channels = out_channels
+            if pool:
+                height //= 2
+                width //= 2
+        self.backbone = nn.Sequential(*stages)
+        self.reduce = nn.Sequential(
+            nn.Conv2d(widths[-1], reduce_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(reduce_channels),
+            nn.ReLU(inplace=True),
+        )
+        self.neck = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(reduce_channels * height * width, neck_dim, bias=False),
+            nn.BatchNorm1d(neck_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+        )
+        self.char_head = nn.Linear(neck_dim, config.NUM_POSITIONS * config.NUM_CHARS)
+        self.color_head = nn.Linear(neck_dim, config.NUM_POSITIONS * config.NUM_COLORS)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        features = self.neck(self.reduce(self.backbone(self.coord(x))))
         char_logits = self.char_head(features).view(-1, config.NUM_POSITIONS, config.NUM_CHARS)
         color_logits = self.color_head(features).view(-1, config.NUM_POSITIONS, config.NUM_COLORS)
         return char_logits, color_logits
@@ -133,6 +236,8 @@ def build_model(model_size: str = "base", dropout: float | None = None) -> nn.Mo
         )
     if model_size == "deep3":
         return Deep3RedCharNet(dropout=0.3 if dropout is None else dropout)
+    if model_size == "v2hi":
+        return V2HiRedCharNet(dropout=0.3 if dropout is None else dropout)
     raise ValueError(f"unknown model_size: {model_size}")
 
 
@@ -153,7 +258,7 @@ if __name__ == "__main__":
     assert wide_color.shape == (2, config.NUM_POSITIONS, config.NUM_COLORS)
     assert wide_params > params
 
-    for size in ("k5", "resblock", "deep3"):
+    for size in ("k5", "resblock", "deep3", "v2hi"):
         model = build_model(size)
         char_logits, color_logits = model(torch.randn(2, 3, config.IMAGE_HEIGHT, config.IMAGE_WIDTH))
         print(size, char_logits.shape, color_logits.shape, count_parameters(model))

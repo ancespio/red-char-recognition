@@ -187,6 +187,23 @@ def save_checkpoint(
     )
 
 
+def restore_training_state(
+    checkpoint_path: Path,
+    model: nn.Module,
+    optimizer: AdamW,
+    scheduler,
+    device: torch.device,
+) -> tuple[int, float]:
+    payload = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(payload["state_dict"])
+    if "optimizer" in payload and payload["optimizer"] is not None:
+        optimizer.load_state_dict(payload["optimizer"])
+    if scheduler is not None and payload.get("scheduler") is not None:
+        scheduler.load_state_dict(payload["scheduler"])
+    metrics = payload.get("metrics", {})
+    return int(payload.get("epoch", 0)), float(metrics.get("exact", -1.0))
+
+
 def append_log(path, row: EpochMetrics) -> None:
     exists = path.exists()
     with path.open("a", newline="", encoding="utf-8") as fh:
@@ -251,17 +268,25 @@ def run_training(args: argparse.Namespace) -> None:
     if not args.overfit_sanity:
         scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=config.ETA_MIN)
     scaler = GradScaler("cuda", enabled=config.AMP and device.type == "cuda")
+    start_epoch = 0
     best_exact = -1.0
+    if args.resume is not None:
+        start_epoch, best_exact = restore_training_state(args.resume, model, optimizer, scheduler, device)
+        best_checkpoint = run_paths.checkpoint_dir / "best.pt"
+        if best_checkpoint.exists():
+            best_payload = torch.load(best_checkpoint, map_location="cpu")
+            best_exact = max(best_exact, float(best_payload.get("metrics", {}).get("exact", best_exact)))
+        print(f"resumed checkpoint={args.resume} start_epoch={start_epoch} best_exact={best_exact:.4f}")
     use_amp = config.AMP and device.type == "cuda"
     log_path = (
         run_paths.log_path.with_name("overfit_log.csv")
         if args.overfit_sanity
         else run_paths.log_path
     )
-    if log_path.exists():
+    if log_path.exists() and args.resume is None:
         log_path.unlink()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch + 1, epochs + 1):
         train_loss = train_one_epoch(
             model,
             train_loader,
@@ -353,6 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--augment-preset", choices=list(config.AUGMENT_PRESETS), default="light")
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
+    parser.add_argument("--resume", type=Path, default=None)
     return parser
 
 
