@@ -1187,3 +1187,68 @@ submission 生成与 Kaggle 结果：
   1. 训练第二个 glyph seed，并做 glyph checkpoint ensemble；
   2. 尝试 `all_glyphs + noaug` 或轻量 medium augmentation，但避免已验证过慢的 `hires`；
   3. 在 reranker 上增加 per-position / confusion-group 选择，而不是全局 alpha。
+
+### 第二个 glyph seed 与更保守 rerank 提交（2026-06-19）
+
+目标：
+
+- 延续上一轮有效的 glyph reranker 路线，训练第二个本地 glyph seed。
+- 不使用他人 submission 或 checkpoint；`0.98520` 仍不计入本分支成绩。
+
+训练：
+
+- run-name：`local_glyph_seed66_red_gap_noaug`
+- 命令：`python -u train_glyph.py --epochs 20 --seed 66 --run-name local_glyph_seed66_red_gap_noaug --input-mode red --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --no-augment`
+- best epoch：`15`
+- best red-glyph val_acc：`0.99406`
+- checkpoint：`red_char/outputs/runs/local_glyph_seed66_red_gap_noaug/checkpoints/best.pt`
+
+本地 reranker 搜索：
+
+- 主模型仍使用四模型 beam：
+  - `local_v2hi_seed61`
+  - `local_v2hi_seed62`
+  - `local_wide_seed51_cache_50ep_20260618`
+  - `local_k5_seed52`
+- 主模型权重：
+  - char：`0.20 | 0.20 | 0.42 | 0.18`
+  - color：`0 | 0.34 | 0 | 0.66`
+- base exact：`2474/2500 = 0.9896`
+- seed65 单 glyph：
+  - best alpha：`top_k=2, alpha=0.70`
+  - rerank exact：`2475/2500 = 0.9900`
+  - override positions：`31`
+- seed66 单 glyph：
+  - best alpha：`top_k=2, alpha=0.40`
+  - rerank exact：`2475/2500 = 0.9900`
+  - override positions：`14`
+- seed65 + seed66 glyph ensemble：
+  - best alpha：`top_k=2, alpha=0.65`
+  - rerank exact：`2475/2500 = 0.9900`
+  - override positions：`26`
+- selective rerank：三组 glyph 候选均未超过 base exact。
+
+提交选择：
+
+- 因 seed66 用更少 override 达到同样本地 exact，选择提交 seed66 单 glyph 的保守 rerank。
+- 暂不提交 seed65+seed66 ensemble，因为本地没有比单 seed 更高，且 override 更多。
+
+submission 生成与 Kaggle 结果：
+
+- 输出：`submissions/submission_local_stage2_glyph66_rerank_alpha040.csv`
+- 根目录提交副本：`submission.csv`
+- 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 glyph66 rerank alpha040"`
+- ref：`53818428`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98260`
+
+结论：
+
+- 第二个 glyph seed 继续带来 public 提升：`0.98200 -> 0.98260`。
+- 本分支当前自有最好 Kaggle public：`0.98260`。
+- 距离 `99+` 仍有明显差距，但 glyph reranker 是当前最有效方向。
+- 下一步优先尝试：
+  1. 再训练一个 no-augment glyph seed，观察 public 是否继续随更保守 rerank 上升；
+  2. 训练 `all_glyphs + noaug`，看非红位置字符样本是否能改善字符边界；
+  3. 做 confusion-group / per-position rerank 搜索，避免全局 alpha 只改少量位置。
