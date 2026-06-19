@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 import config
 from dataset import TrainAugmentation, TransformSubset, build_train_dataset, deterministic_split_indices, filename_hash, seed_everything
+from kfold import N_FOLDS, fold_split
 from metrics import batch_metrics, compute_loss
 from model import build_model, count_parameters
 
@@ -46,6 +47,12 @@ def resolve_run_paths(run_name: str | None, output_root: Path = config.OUTPUT_DI
         root = output_root / "runs" / run_name
         return RunPaths(root / "checkpoints", root / "logs" / "train_log.csv")
     return RunPaths(output_root / "checkpoints", output_root / "logs" / "train_log.csv")
+
+
+def resolve_split_indices(n_items: int, fold: int | None, n_folds: int) -> tuple[list[int], list[int]]:
+    if fold is None:
+        return deterministic_split_indices(n_items, seed=config.SPLIT_SEED)
+    return fold_split(n_items, fold=fold, n_folds=n_folds)
 
 
 def make_loader(
@@ -156,6 +163,8 @@ def save_checkpoint(
     run_name: str | None,
     red_char_weight: float,
     model_size: str,
+    fold: int | None,
+    n_folds: int,
 ) -> None:
     torch.save(
         {
@@ -179,6 +188,8 @@ def save_checkpoint(
                 "augment": augment,
                 "augment_preset": augment_preset,
                 "run_name": run_name,
+                "fold": fold,
+                "n_folds": n_folds,
             },
             "train_hash": filename_hash(train_names),
             "val_hash": filename_hash(val_names),
@@ -220,7 +231,7 @@ def run_training(args: argparse.Namespace) -> None:
     run_paths.ensure()
     device = torch.device(config.DEVICE)
     dataset = build_train_dataset(cache_in_ram=args.cache_in_ram)
-    train_indices, val_indices = deterministic_split_indices(len(dataset), seed=config.SPLIT_SEED)
+    train_indices, val_indices = resolve_split_indices(len(dataset), args.fold, args.n_folds)
     train_names = [dataset.samples[idx].filename for idx in train_indices]
     val_names = [dataset.samples[idx].filename for idx in val_indices]
 
@@ -260,7 +271,8 @@ def run_training(args: argparse.Namespace) -> None:
         f"device={device} params={params} augment={effective_augment} "
         f"training_seed={args.seed} split_seed={config.SPLIT_SEED} "
         f"run_name={args.run_name or 'default'} red_char_weight={args.red_char_weight} "
-        f"model_size={args.model_size} augment_preset={args.augment_preset}"
+        f"model_size={args.model_size} augment_preset={args.augment_preset} "
+        f"fold={args.fold if args.fold is not None else 'holdout'} n_folds={args.n_folds}"
     )
     assert params > 5_000_000
 
@@ -338,6 +350,8 @@ def run_training(args: argparse.Namespace) -> None:
             args.run_name,
             args.red_char_weight,
             args.model_size,
+            args.fold,
+            args.n_folds,
         )
         if metrics["exact"] > best_exact:
             best_exact = metrics["exact"]
@@ -356,6 +370,8 @@ def run_training(args: argparse.Namespace) -> None:
                 args.run_name,
                 args.red_char_weight,
                 args.model_size,
+                args.fold,
+                args.n_folds,
             )
         if args.overfit_sanity and train_loss < 0.01 and metrics["exact"] == 1.0:
             print("overfit sanity passed")
@@ -379,6 +395,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument("--fold", type=int, default=None)
+    parser.add_argument("--n-folds", type=int, default=N_FOLDS)
     return parser
 
 

@@ -16,6 +16,7 @@ from tqdm import tqdm
 import config
 from dataset import build_train_dataset, deterministic_split_indices, filename_hash, seed_everything
 from glyph import GLYPH_CROP_WIDTH, GlyphDataset, GlyphNet
+from kfold import N_FOLDS, fold_split
 from model import count_parameters
 
 
@@ -29,6 +30,12 @@ def make_loader(dataset: GlyphDataset, batch_size: int, shuffle: bool, num_worke
     if num_workers > 0:
         kwargs["persistent_workers"] = True
     return DataLoader(dataset, **kwargs)
+
+
+def resolve_split_indices(n_items: int, fold: int | None, n_folds: int) -> tuple[list[int], list[int]]:
+    if fold is None:
+        return deterministic_split_indices(n_items, seed=config.SPLIT_SEED)
+    return fold_split(n_items, fold=fold, n_folds=n_folds)
 
 
 @torch.no_grad()
@@ -76,6 +83,8 @@ def save_checkpoint(
             "all_glyphs": args.all_glyphs,
             "augment": args.augment,
             "red_line_aug": args.red_line_aug,
+            "fold": args.fold,
+            "n_folds": args.n_folds,
         },
         path,
     )
@@ -98,6 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument("--fold", type=int, default=None)
+    parser.add_argument("--n-folds", type=int, default=N_FOLDS)
     return parser
 
 
@@ -113,7 +124,7 @@ def main() -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     base = build_train_dataset(cache_in_ram=args.cache_in_ram)
-    train_indices, val_indices = deterministic_split_indices(len(base), seed=config.SPLIT_SEED)
+    train_indices, val_indices = resolve_split_indices(len(base), args.fold, args.n_folds)
     train_names = [base.samples[idx].filename for idx in train_indices]
     val_names = [base.samples[idx].filename for idx in val_indices]
     train_ds = GlyphDataset(
@@ -152,7 +163,8 @@ def main() -> None:
 
     print(
         f"device={device} params={count_parameters(model):,} "
-        f"train_glyphs={len(train_ds)} val_glyphs={len(val_ds)}"
+        f"train_glyphs={len(train_ds)} val_glyphs={len(val_ds)} "
+        f"fold={args.fold if args.fold is not None else 'holdout'} n_folds={args.n_folds}"
     )
     for epoch in range(start_epoch + 1, args.epochs + 1):
         model.train()

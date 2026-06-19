@@ -1689,3 +1689,52 @@ resblock 训练结果与止损：
   - 该模型明显低于第二阶段计划中进入 ensemble 的本地门槛 `0.975`，也低于现有主模型组合。
   - 本轮停止继续训练 `local_resblock_seed54`，不生成 submission，不提交 Kaggle。
   - 当前自有 Kaggle 最好仍为 `0.98320`；`0.98520` 及其他更高分支不计入本分支成果。
+
+deep3 正式训练尝试：
+
+- 训练目标：`local_deep3_seed56`
+- 参数：
+  - `--epochs 50`
+  - `--seed 56`
+  - `--model-size deep3`
+  - `--augment-preset light`
+  - `--red-char-weight 2.5`
+  - `--num-workers 0`
+  - `--no-cache-in-ram`
+- 运行方式：
+  - 前台分段运行，并使用 `--resume outputs/runs/local_deep3_seed56/checkpoints/last.pt` 续跑。
+  - 已完整记录到 epoch 9。
+- 当前日志：
+  - epoch 3：exact `0.79280`
+  - epoch 5：exact `0.88520`
+  - epoch 6：exact `0.88800`
+  - epoch 9：exact `0.23280`
+- 决策：
+  - deep3 在当前配置下明显不稳定，最高 exact `0.88800`，远低于 `0.975` 门槛。
+  - 本轮停止继续训练 `local_deep3_seed56`，不生成 submission，不提交 Kaggle。
+  - 第二阶段计划内的 k5/resblock/deep3 多样性模型未带来比 wide/v2hi 更强的单模型；下一步应优先参考高分分支的 OOF/更可靠评估链路，而不是继续盲训新架构。
+
+参考高分分支后的最小 OOF 基础设施迁移：
+
+- 参考范围：
+  - 只读查看 `origin/feature/glyph-reranker-98.72` 的 `HANDOFF.md`、`kfold.py`、`oof_predict.py`、`tune_oof.py`。
+  - 该分支及其 `0.98520` / 更高平台成绩不计入本分支成果。
+  - 不直接 merge：该分支会删除本分支 `timeline.md` 和多份本分支 submission，且会移除现有测试文件。
+- 参考结论：
+  - 2500 张单 split val 在高分段噪声过大，`2478/2500` 附近继续提交同分变体不可取。
+  - 后续阈值、rerank、伪标签与架构选择应优先用 K 折 OOF / 更大验证集判断，再决定是否提交 Kaggle。
+- 本分支已迁移的最小代码：
+  - 新增 `red_char/kfold.py`：固定 seed `1234`、默认 5 折，生成可复现 fold assignment 与 train/val split。
+  - `red_char/train.py` 新增 `--fold` / `--n-folds`，未指定时保持原 95/5 holdout 行为。
+  - `red_char/train_glyph.py` 新增 `--fold` / `--n-folds`，未指定时保持原 95/5 holdout 行为。
+  - checkpoint config 增加 `fold` / `n_folds`，便于后续 OOF 模型追踪。
+- 新增测试：
+  - `red_char/test_kfold.py`
+  - 覆盖 fold assignment 可复现、5 折完整覆盖、训练 parser 接受 fold 参数。
+- 验证：
+  - `python -m unittest test_kfold.py`：`3 OK`
+  - `python -m unittest discover -p "test*.py"`：`51 OK`
+  - `python kfold.py`：`folds=5 sizes=[10000, 10000, 10000, 10000, 10000] seed=1234`
+- 下一步建议：
+  - 若继续训练，应优先训练少量 OOF fold 模型做评估链路 smoke，而不是直接生成 Kaggle submission。
+  - 只有 OOF 或更大验证信号显示稳定提升时，再生成新 submission 并提交。
