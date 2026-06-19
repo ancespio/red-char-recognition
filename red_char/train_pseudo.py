@@ -83,6 +83,8 @@ def generate_pseudo_labels(teacher_ckpts, device, char_th: float, color_th: floa
 def run(args: argparse.Namespace) -> None:
     if args.heavy_aug:
         config.AUG_HEAVY = True
+    if getattr(args, "full_data", False):
+        config.VAL_RATIO = 0.01
     seed_everything(args.seed)
     config.ensure_output_dirs()
     device = torch.device(config.DEVICE)
@@ -90,7 +92,7 @@ def run(args: argparse.Namespace) -> None:
 
     # --- build pure val split + true-labelled train split -------------------
     base = build_train_dataset(cache_in_ram=args.cache_in_ram)
-    train_idx, val_idx = deterministic_split_indices(len(base))
+    train_idx, val_idx = deterministic_split_indices(len(base), config.VAL_RATIO)
     train_names = [base.samples[i].filename for i in train_idx]
     val_names = [base.samples[i].filename for i in val_idx]
     true_train = _AugmentedSubset(base, train_idx, TrainAugment())
@@ -153,6 +155,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=config.SEED)
     p.add_argument("--tag", type=str, default="_pseudo")
     p.add_argument("--heavy-aug", action="store_true", help="stronger colour-safe augmentation")
+    p.add_argument("--full-data", action="store_true", help="near-full-data retrain (VAL_RATIO->0.01)")
     p.add_argument("--char-th", type=float, default=0.997)
     p.add_argument("--color-th", type=float, default=0.997)
     p.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)

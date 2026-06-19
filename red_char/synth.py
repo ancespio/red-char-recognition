@@ -67,9 +67,9 @@ def _draw_chars(img: Image.Image) -> None:
         img.paste(glyph, (cx - glyph.width // 2, cy - glyph.height // 2), glyph)
 
 
-def _add_lines(img: Image.Image) -> None:
+def _add_lines(img: Image.Image, lo: int = 3, hi: int = 7) -> None:
     draw = ImageDraw.Draw(img)
-    for _ in range(random.randint(3, 7)):
+    for _ in range(random.randint(lo, hi)):
         # endpoints near opposite edges so the line spans the image
         if random.random() < 0.5:
             p0 = (random.randint(-10, 30), random.randint(0, H))
@@ -81,6 +81,54 @@ def _add_lines(img: Image.Image) -> None:
         # U-Net must learn to remove thick full-span lines, not just thin ones.
         width = random.randint(3, 6) if random.random() < 0.45 else random.randint(1, 2)
         draw.line([p0, p1], fill=_rand_color(), width=width)
+
+
+def _red_ink() -> tuple[int, int, int]:
+    # red gamut: R clearly dominant; covers bright to dull red
+    r = random.randint(150, 240)
+    g = random.randint(0, max(0, r - 110))
+    b = random.randint(0, max(0, r - 110))
+    return (r, g, b)
+
+
+def _nonred_ink() -> tuple[int, int, int]:
+    # any saturated colour that is NOT red-dominant (green/blue/purple/teal/...)
+    for _ in range(8):
+        c = [random.randint(0, 200) for _ in range(3)]
+        c[random.randint(0, 2)] = random.randint(0, 120)
+        if c[0] - max(c[1], c[2]) < 30:  # ensure not red-dominant
+            return tuple(c)
+    return (40, 90, 180)
+
+
+def make_labeled() -> tuple[np.ndarray, list[int], list[int]]:
+    """Return (lined_image[3,H,W] float in [0,1], char_idx[5], color_idx[5]).
+
+    Procedural captcha matching the real style: generic bold sans glyph at the
+    real ~25-36px size, ~50% red (red gamut) / 50% non-red, jitter, then lines +
+    noise. Labels are exact by construction (for mixing into recognition training)."""
+    img = Image.fromarray(_background())
+    draw = ImageDraw.Draw(img)
+    n = config.NUM_POSITIONS
+    chars, colors = [], []
+    for pos in range(n):
+        ch = random.choice(CHARSET)
+        is_red = random.random() < 0.5
+        size = random.randint(24, 36)
+        font = ImageFont.truetype(random.choice(_FONTS), size)
+        cx = int((pos * 2 + 1) * W / (2 * n) + random.randint(-10, 10))
+        cy = int(H / 2 + random.randint(-7, 7))
+        glyph = Image.new("RGBA", (size + 24, size + 24), (0, 0, 0, 0))
+        ImageDraw.Draw(glyph).text((12, 6), ch, font=font,
+                                   fill=(_red_ink() if is_red else _nonred_ink()) + (255,))
+        glyph = glyph.rotate(random.uniform(-16, 16), expand=True, resample=Image.BILINEAR)
+        img.paste(glyph, (cx - glyph.width // 2, cy - glyph.height // 2), glyph)
+        chars.append(config.CHAR_TO_IDX[ch])
+        colors.append(config.RED_INDEX if is_red else config.NON_RED_INDEX)
+    _add_lines(img, lo=2, hi=4)  # real images are sparser than the denoiser-synth
+    arr = (np.asarray(img, np.float32) / 255.0).transpose(2, 0, 1)
+    noisy = np.clip(arr + np.random.randn(*arr.shape).astype(np.float32) * 0.02, 0, 1)
+    return noisy, chars, colors
 
 
 def make_pair() -> tuple[np.ndarray, np.ndarray]:

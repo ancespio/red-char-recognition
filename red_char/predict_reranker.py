@@ -29,6 +29,8 @@ def main() -> None:
     parser.add_argument("--glyph-margin-min", type=float, default=0.0)
     parser.add_argument("--red-threshold", type=float, default=0.20)
     parser.add_argument("--x-tta", action="store_true")
+    parser.add_argument("--rich-tta", action="store_true", help="2D multi-shift TTA (7 horiz x 3 vert = 21 views)")
+    parser.add_argument("--conf-beta", type=float, default=0.0, help="confidence-weighted ensemble exponent (0=uniform avg)")
     parser.add_argument("--output", type=Path, default=config.OUTPUT_DIR / "submission_reranker.csv")
     args = parser.parse_args()
 
@@ -45,15 +47,20 @@ def main() -> None:
     for images, filenames in tqdm(loader, desc="predict-reranker"):
         images = images.to(device, non_blocking=True)
         char_prob = color_prob = None
-        shifts = (0, -4, 4) if args.x_tta else (0,)
-        for shift in shifts:
+        if getattr(args, "rich_tta", False):
+            shifts = [(dx, dy) for dx in (-6, -4, -2, 0, 2, 4, 6) for dy in (-2, 0, 2)]
+        elif args.x_tta:
+            shifts = [(-4, 0), (0, 0), (4, 0)]
+        else:
+            shifts = [(0, 0)]
+        for dx, dy in shifts:
             shifted = (
                 images
-                if shift == 0
+                if dx == 0 and dy == 0
                 else VF.affine(
                     images,
                     angle=0,
-                    translate=[shift, 0],
+                    translate=[dx, dy],
                     scale=1.0,
                     shear=[0.0, 0.0],
                     interpolation=InterpolationMode.BILINEAR,
@@ -64,11 +71,17 @@ def main() -> None:
                 char_logits, color_logits = model(shifted)
                 current_char = F.softmax(char_logits, dim=-1)
                 current_color = F.softmax(color_logits, dim=-1)
+                beta = getattr(args, "conf_beta", 0.0)
+                if beta > 0:  # confidence-weighted: let confident models dominate per position
+                    wc = current_char.amax(-1, keepdim=True) ** beta
+                    wk = current_color.amax(-1, keepdim=True) ** beta
+                    current_char = current_char * wc
+                    current_color = current_color * wk
                 char_prob = current_char if char_prob is None else char_prob + current_char
                 color_prob = current_color if color_prob is None else color_prob + current_color
-        divisor = len(primary_models) * len(shifts)
-        char_prob /= divisor
-        color_prob /= divisor
+        # normalise (per-position sum to 1; works for both uniform and weighted)
+        char_prob = char_prob / char_prob.sum(-1, keepdim=True)
+        color_prob = color_prob / color_prob.sum(-1, keepdim=True)
         glyph_prob = glyph_probabilities(glyph_models, images)
         if args.selective:
             char_pred = selective_rerank(

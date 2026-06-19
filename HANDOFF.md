@@ -1,7 +1,8 @@
 # 红色字符识别 — 交接文档 (HANDOFF)
 
-> 面向接手的 agent / 协作者。读完即可复现现状并继续推进。最后更新：2026-06-16（**最终版**）。
-> 完整方法另见 `方法报告_98.72.md`（技术报告）。当前最佳 = 平台 **98.72%**，已定稿。
+> 面向接手的 agent / 协作者。读完即可复现现状并继续推进。最后更新：2026-06-19（**最终版**）。
+> **完整自洽技术报告见 `方法报告_98.96.md`**（无需历史背景即可复现）。当前最佳 = 平台 **98.96%**（已超目标 98.86），已定稿。
+> 最终提交：`red_char/outputs/submission_ghl.csv`。
 
 ## 1. 任务
 
@@ -19,11 +20,15 @@
 | 12 主模型 + TTA + glyph reranker(gf1) | 0.9928 | 0.9840 |
 | + glyph hires+GAP(gfg) | 0.9936 | 0.9856 |
 | + glyph 红度隔离(gfr) | 0.9940 | 0.9860 |
-| **+ glyph 红度+红线增强(gfrl) ★最终最佳** | **0.9944** | **0.9872** |
-| I/1 过采样(gfb) | 0.9948 | 0.9864（**反降，作废**） |
+| glyph 红度+红线增强(gfrl) | 0.9944 | 0.9872 |
+| + 红色阈值/集成扩容微调 | 0.9944 | 0.9876 |
+| **★ ghl: red2 + 重红线/浅红/遮挡增强 + 100ep 长训** | **0.9964** | **0.9896** |
 
-**★ 最终提交文件**：`red_char/outputs/submission_reranker_gfrl.csv`（平台 **0.9872**）。
-**重要教训**：2,500 验证集在 ≥0.994 这个精度上已分辨不出真实差异（1~2 个样本=噪声）。`gfb` 在 val 涨 1 个样本(0.9944→0.9948)却在平台**反降**(0.9872→0.9864)——**val 的 ±1 样本不可信，平台是唯一裁判，且已到平台期**。后续若要继续，必须用 K 折 OOF（全量 50000）或更大留出集来判断改进，切勿凭 2500 val 的小数点末位提交。
+**★ 最终提交文件**：`red_char/outputs/submission_ghl.csv`（平台 **0.9896**，已超目标 98.86）。配置 = 15 主模型(9 v2hi + 3 ps + 3 r2ps) + **ghl glyph ×3** + 选择性重排(primary_margin≤0.50, glyph_margin≥0.05, red_thr=0.20) + 水平 TTA。
+
+**制胜一招(98.76→98.96)**：glyph 局部识别器用 **red2 强度鲁棒红度表示 + 重红线遮挡增强(p0.7,1-5条红线) + 浅红渐变增强(p0.4) + cutout(p0.3) + 100 epoch 长训**。在 held-out 6231 红字上错误 19→8(V 0.995→1.0, I 0.976→0.994)。**"长训"是关键**——同样增强只训 40ep 无效;补足 epoch 后才跳分。完整细节见 `方法报告_98.96.md` 第 4 节。
+
+**教训**：2,500 val 在 ≥0.994 精度只到 ±1 样本噪声,**阈值/小集成微调不可信**(gfb val+1 平台-；阈值 0.65 平台-)。真增益必须有**大样本支撑**(held-out 6231 红字逐类、或端到端 val ≥+5 样本),ghl 正是如此才转化到平台。把"重线+长训"用到**主模型**(phl, char 0.990→0.994)虽真变强,但被 glyph 重排吸收,端到端平台不变(仍 98.96)。
 备选：`submission_pseudo6.csv`（6 个伪标签学生集成，val 同为 0.99，更稳健，与 pseudo3 差 24/5000，未提交）。
 
 ## 3. 环境（重要）
@@ -58,7 +63,8 @@
      - `gf1` 原始(2 池化→15×16, Flatten, rgb)：val 0.9928 / 平台 0.9840
      - `gfg` **hires(1 池化→30×32) + GAP 小头**（flat 大 FC 会过拟合，GAP 才对）：0.9936 / 0.9856
      - `gfr` **红度输入 `input_mode=red`**（附加 `relu(R−max(G,B))` 红度图+暗度图，隔离非红线）：0.9940 / 0.9860
-     - `gfrl` **红度 + 红线增强 `--red-line-aug 0.5`**（训练叠加合成红线，抗残留红线）★最终：0.9944 / **0.9872**
+     - `gfrl` 红度 + 红线增强 `--red-line-aug 0.5`：0.9944 / 0.9872
+     - **`ghl` ★最终制胜：`--input-mode red2`(每块归一化红度,救浅红) + 重红线增强 `--red-line-aug 0.7`(1~5条) + 浅红渐变 `--faint-aug 0.4` + `--cutout 0.3` + `--epochs 100`(长训是关键)**：held-out 6231 红字错误 19→8(V 0.995→1.0, I 0.976→0.994),端到端 val 0.9944→**0.9964 / 平台 0.9896**。完整细节见 `方法报告_98.96.md` §4。
    - 最终阈值：`--primary-margin-max 0.40 --glyph-margin-min 0.05 --red-threshold 0.20`，glyph 用 `gfrl1/gfrl2` 两 seed。
 10. **K 折 OOF 框架（已建，用于无偏调参/诊断）**：`kfold.py` 5 折 + `train.py/train_glyph.py --fold` + `oof_predict.py`（拼全量 50000 无偏预测）+ `tune_oof.py`（向量化网格搜阈值）。因 2500 val 已饱和，后续任何调参/改进**必须**用 OOF 这种大样本判断。
 11. ❌ **本轮新增负面结果（勿重复）**：
@@ -87,7 +93,7 @@
 | `eval_ensemble.py` | 集成 val/train 上 exact/char/color；`--split val/train/both --denoised --concat-denoised` |
 | `analyze_errors.py` / `char_confusion.py` / `dump_val_errors.py` | 误差/混淆诊断、导出错误图 |
 | `glyph.py` | 局部字符数据集/模型(`GlyphNet`: `hires`/`head_mode=gap`/`input_mode=red`/`crop_width`/`boost_chars`) + 裁切/推理 |
-| `train_glyph.py` | 训练 glyph；`--hires --head-mode gap --input-mode red --red-line-aug --crop-width --boost-chars --boost-factor --all-glyphs --fold` |
+| `train_glyph.py` | 训练 glyph；`--hires --head-mode gap --input-mode red2 --red-line-aug --faint-aug --cutout --crop-width --boost-chars --all-glyphs --fold` |
 | `eval_reranker.py` / `predict_reranker.py` | 主模型+TTA+选择性重排：验证 / 生成 submission |
 | `glyph_perclass.py` | glyph 逐类(I/1/S/G…)准确率，验证定向改进是否真有效 |
 | `kfold.py` / `oof_predict.py` / `tune_oof.py` | K 折 OOF 框架（全量 50000 无偏调参/诊断） |
@@ -95,10 +101,10 @@
 | `evaluate.py` / `train_pair_glyph.py` / `eval_pair_reranker.py` / `eval_knn_reranker.py` | 旧/负面实验，留档 |
 
 **Checkpoints**（`outputs/checkpoints/best_*.pt`，含 EMA 权重）：
-- **★最终系统成员**：主模型 12 个 = `best_ps1/2/3.pt`+`best_r2ps1/2/3.pt`+`best_v2hs1..6.pt`；glyph = **`best_gfrl1/2.pt`**
-- v2 多 seed：`best_seed1/2/3.pt`（早期）
-- glyph 迭代：`best_gf1.pt`(原始)、`best_gfg1-3.pt`(hires+gap)、`best_gfr1/2.pt`(红度)、`best_gfrl1/2.pt`(红度+红线★)
-- 负面留档：`best_gfb1/2.pt`(I/1过采样,平台反降)、`best_gfw1/2.pt`(宽裁切)、`best_hps*`(强增强伪标签)、`best_v3s*`(预训练)、`best_dn*/cd*`(去线/6通道)、`best_gfh*`(flat-hires)、`best_pair*`、`denoiser_v2.pt`、各折 `best_f*s1/gff*.pt`
+- **★最终系统(98.96)成员**：主模型 15 个 = `best_v2hs1..9.pt` + `best_ps1/2/3.pt` + `best_r2ps1/2/3.pt`；glyph = **`best_ghl1/2/3.pt`**(red2+重增强+100ep)
+- glyph 迭代(早→晚)：`best_gf1`(原始)→`best_gfg1-3`(hires+gap)→`best_gfr1/2`(红度)→`best_gfrl1-6`(红度+红线)→**`best_ghl1-6`(red2+重红线/浅红/cutout+长训★)**
+- `best_phl1-6.pt`：主模型也用 ghl 配方(red-line 0.6 + 100ep)训的版本,char 0.990→0.994 真变强,但端到端被 glyph 重排吸收(平台仍 98.96),**未进最终提交**,留档
+- 负面留档：`best_gfb*`(I/1过采样,平台反降)、`best_gfw*`(宽裁切)、`best_gfc*`(cutout-only)、`best_hps*`(强增强伪标签)、`best_v3s*`(预训练)、`best_dn*/cd*`(去线/6通道)、`best_gfh*`(flat-hires)、`best_v2hiff`类(端到端去噪前端)、各折 `best_f*s1/gff*`
 
 ## 7. 复现关键命令
 
@@ -107,22 +113,23 @@ cd red_char
 PY=/home/duxuanzheng/.conda/envs/red_char/bin/python
 CK=outputs/checkpoints
 
-PRIM="$CK/best_ps1.pt $CK/best_ps2.pt $CK/best_ps3.pt $CK/best_r2ps1.pt $CK/best_r2ps2.pt $CK/best_r2ps3.pt $CK/best_v2hs1.pt $CK/best_v2hs2.pt $CK/best_v2hs3.pt $CK/best_v2hs4.pt $CK/best_v2hs5.pt $CK/best_v2hs6.pt"
+PRIM="$CK/best_ps1.pt $CK/best_ps2.pt $CK/best_ps3.pt $CK/best_r2ps1.pt $CK/best_r2ps2.pt $CK/best_r2ps3.pt $CK/best_v2hs1.pt $CK/best_v2hs2.pt $CK/best_v2hs3.pt $CK/best_v2hs4.pt $CK/best_v2hs5.pt $CK/best_v2hs6.pt $CK/best_v2hs7.pt $CK/best_v2hs8.pt $CK/best_v2hs9.pt"
+GHL="$CK/best_ghl1.pt $CK/best_ghl2.pt $CK/best_ghl3.pt"
 
-# ★ 评测最终系统(val，输出 selective exact≈0.9944)
-CUDA_VISIBLE_DEVICES=0 $PY eval_reranker.py --x-tta --top-k 3 \
-  --checkpoints $PRIM --glyph-checkpoints $CK/best_gfrl1.pt $CK/best_gfrl2.pt
+# ★ 评测最终系统(val，输出 selective exact≈0.9964)
+CUDA_VISIBLE_DEVICES=0 $PY eval_reranker.py --x-tta --top-k 3 --checkpoints $PRIM --glyph-checkpoints $GHL
 
-# ★ 生成最终提交（平台 0.9872）= submission_reranker_gfrl.csv
+# ★ 生成最终提交（平台 0.9896）= submission_ghl.csv
 CUDA_VISIBLE_DEVICES=0 $PY predict_reranker.py --x-tta --selective --top-k 3 \
-  --primary-margin-max 0.40 --glyph-margin-min 0.05 --red-threshold 0.20 \
-  --checkpoints $PRIM --glyph-checkpoints $CK/best_gfrl1.pt $CK/best_gfrl2.pt \
-  --output outputs/submission_reranker_gfrl.csv
+  --primary-margin-max 0.50 --glyph-margin-min 0.05 --red-threshold 0.20 \
+  --checkpoints $PRIM --glyph-checkpoints $GHL \
+  --output outputs/submission_ghl.csv
 
-# 训练最终 glyph（红度+红线增强）
+# ★ 训练制胜 glyph（ghl：red2 + 重红线/浅红/遮挡增强 + 100ep 长训）
 OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 CUDA_VISIBLE_DEVICES=0 setsid $PY -u \
-  train_glyph.py --hires --head-mode gap --input-mode red --red-line-aug 0.5 \
-  --epochs 30 --seed 1 --tag _gfrl1 > outputs/logs/gfrl1.log 2>&1 </dev/null &
+  train_glyph.py --hires --head-mode gap --input-mode red2 \
+  --red-line-aug 0.7 --faint-aug 0.4 --cutout 0.3 --epochs 100 --seed 1 --tag _ghl1 \
+  > outputs/logs/ghl1.log 2>&1 </dev/null &
 
 # 训练一个 v2hi seed（限线程 + setsid 后台）
 OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 CUDA_VISIBLE_DEVICES=0 setsid $PY -u \
@@ -138,14 +145,15 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 CUDA_VISIBLE_DEVICES=0 setsid $PY -u \
 
 ## 8. 最终状态与（若继续）下一步
 
-**已定稿**：最终最佳 = `submission_reranker_gfrl.csv`，平台 **0.9872**。用户已决定停止纯模型侧改进（I/1 过采样平台反降验证了平台期）。
+**已定稿**：最终最佳 = **`submission_ghl.csv`，平台 0.9896**（已超目标 98.86）。完整自洽方法见 `方法报告_98.96.md`。
+
+制胜路径回顾(平台)：97.00(v2集成) → 97.94(v2hi高分辨率) → 98.10(伪标签) → 98.76(glyph重排+红度+红线增强) → **98.96(ghl: red2 + 重红线/浅红/cutout 增强 + 100ep 长训)**。
 
 若后续仍要推进（按优先级 / 全部合规）：
-1. **凡改进必用 K 折 OOF（全量 50000）判断**，禁止凭 2500 val 末位小数提交——`gfb` 已证 val +1 样本会在平台反降。
-2. **全量数据重训最终主模型 + glyph**：把 2500 验证集并回训练（多 5% 真标签），同配方固定 epoch + EMA(last)，可能小涨；无 val 时以当前模型为回退。
-3. **真正可能大跳**：识别/获取验证码**生成器或确切字体**，做零域差距的合成数据训练（推测同学 99.9% 来源）。这是纯模型侧之外唯一高概率路径。
-4. **红线方向延伸**只在 glyph 有效；主模型、宽裁切、去线均已证无效，勿重复。
-5. 红线：**绝不**获取/使用隐藏 test 答案调模型（测试集泄露+学术不端）；对症分析用带真标签的验证集/K 折。
+1. **凡改进必用大样本判断**：2500 val 在 ≥0.994 只到 ±1 样本噪声;用 held-out 6231 红字逐类 或 端到端 val ≥+5 样本(ghl 即如此才转化到平台)。阈值/小集成微调不可信(gfb、阈值0.65 均平台反降)。
+2. **"重线+长训"配方**对 glyph 有效(ghl);用到主模型(phl)char 真升 0.990→0.994 但被 glyph 重排吸收,端到端不变。可探:更强/更深 glyph、glyph 伪标签、第二级候选仲裁器(OOF 标定)。
+3. 已证无效(勿重复)：预训练大模型、强增强含模糊、合成去线 U-Net、端到端去噪前端、宽裁切、I/1过采样、合成数据混训、全量重训(被重排吸收)、阈值/TTA 微调。
+4. **绝不**获取/使用隐藏 test 答案调模型(测试集泄露+学术不端);仅用 test 图像做伪标签/TTA(合规)。
 
 ## 9. 红线（务必遵守）
 

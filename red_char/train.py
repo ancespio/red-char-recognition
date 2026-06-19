@@ -193,6 +193,8 @@ def run_training(args: argparse.Namespace) -> None:
         config.AUG_HEAVY = True
     if getattr(args, "denoised", False):
         config.TRAIN_IMAGES = config.DENOISED_TRAIN  # train on line-removed images
+    if getattr(args, "full_data", False):
+        config.VAL_RATIO = 0.01  # near-full-data final retrain (49500 train / 500 monitor)
     seed_everything(args.seed)
     config.ensure_output_dirs()
     tag = args.tag
@@ -245,6 +247,12 @@ def run_training(args: argparse.Namespace) -> None:
             cache_in_ram=args.cache_in_ram, augment=args.augment, denoised_dir=dn_dir,
             red_line_p=getattr(args, "red_line_aug", 0.0),
         )
+        if getattr(args, "synth_frac", 0.0) > 0:
+            from dataset import SynthDataset
+            from torch.utils.data import ConcatDataset
+            n_synth = int(len(train_ds) * args.synth_frac)
+            train_ds = ConcatDataset([train_ds, SynthDataset(n_synth)])
+            print(f"mixing {n_synth} synthetic samples ({args.synth_frac:.0%}) into training")
         train_loader = make_loader(train_ds, batch_size=config.BATCH_SIZE, shuffle=True)
         val_loader = make_loader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False)
         model = build_model(model_name).to(device)
@@ -313,15 +321,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=config.EPOCHS)
     parser.add_argument("--steps-per-epoch", type=int, default=None)
     parser.add_argument("--overfit-sanity", action="store_true")
-    parser.add_argument("--model", type=str, default=None, choices=["v1", "v2", "v2hi", "v2hi6", "v3"], help="override config.MODEL")
+    parser.add_argument("--model", type=str, default=None, choices=["v1", "v2", "v2hi", "v2hi6", "v2hiff", "v3"], help="override config.MODEL")
     parser.add_argument("--lr", type=float, default=config.LR, help="peak LR (lower for pretrained v3)")
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--augment", action=argparse.BooleanOptionalAction, default=config.USE_AUGMENT)
     parser.add_argument("--ema", action=argparse.BooleanOptionalAction, default=config.USE_EMA)
     parser.add_argument("--heavy-aug", action="store_true", help="enable stronger colour-safe augmentation (fights overfit)")
     parser.add_argument("--denoised", action="store_true", help="train on the line-removed (U-Net denoised) images")
+    parser.add_argument("--full-data", action="store_true", help="near-full-data final retrain (VAL_RATIO->0.01)")
     parser.add_argument("--concat-denoised", action="store_true", help="6ch input: original + denoised (use with --model v2hi6)")
     parser.add_argument("--red-line-aug", type=float, default=0.0, help="prob of overlaying synthetic red lines (robustness)")
+    parser.add_argument("--synth-frac", type=float, default=0.0, help="fraction of procedural synthetic samples to mix into training")
     parser.add_argument("--seed", type=int, default=config.SEED, help="global seed for init/shuffle/aug; val split stays fixed")
     parser.add_argument("--tag", type=str, default="", help="suffix for checkpoint/log filenames, e.g. _seed1")
     parser.add_argument("--fold", type=int, default=None, help="K-fold OOF: train on all folds but this one, validate on it")
