@@ -10,8 +10,8 @@ from tqdm import tqdm
 
 import config
 from dataset import RedCharDataset, Sample, decode_prediction, load_submission_sample
-from ensemble import average_model_logits, load_models
-from eval_reranker import rerank, selective_rerank
+from ensemble import load_models
+from eval_reranker import average_primary_logits, rerank, selective_rerank
 from glyph import glyph_probabilities, load_glyph_model
 from predict import validate_submission, write_submission
 
@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--primary-margin-max", type=float, default=0.20)
     parser.add_argument("--glyph-margin-min", type=float, default=0.0)
     parser.add_argument("--red-threshold", type=float, default=None)
+    parser.add_argument("--x-tta", action="store_true")
     parser.add_argument("--output", type=Path, default=config.OUTPUT_DIR / "submission_reranker.csv")
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE)
     return parser
@@ -47,16 +48,18 @@ def predict_labels(
     primary_margin_max: float = 0.20,
     glyph_margin_min: float = 0.0,
     red_threshold: float | None = None,
+    x_tta: bool = False,
 ) -> tuple[list[str], list[str]]:
     ids: list[str] = []
     labels: list[str] = []
     for images, filenames in tqdm(loader, desc="predict-reranker"):
         images = images.to(device, non_blocking=True)
-        char_logits, color_logits = average_model_logits(
+        char_logits, color_logits = average_primary_logits(
             primary_models,
             images,
             char_weights=char_weights,
             color_weights=color_weights,
+            x_tta=x_tta,
         )
         primary_prob = F.softmax(char_logits, dim=-1)
         glyph_prob = glyph_probabilities(glyph_models, images)
@@ -109,6 +112,7 @@ def main() -> None:
         primary_margin_max=args.primary_margin_max,
         glyph_margin_min=args.glyph_margin_min,
         red_threshold=args.red_threshold,
+        x_tta=args.x_tta,
     )
     write_submission(ids, labels, args.output)
     validate_submission(args.output)

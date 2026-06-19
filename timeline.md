@@ -1461,3 +1461,61 @@ Kaggle 提交尝试：
 - 低 override 的 `glyph67all + glyph68redline + glyph69 alpha100` 未转化为 public 提升，退回 `0.98260`，说明弱 seed69 平滑并不可靠。
 - 根目录 `submission.csv` 已恢复为 `submission_local_stage2_glyph66_glyph67all_rerank_alpha150.csv`。
 - 当前仍未达到 `99+` 目标；下一阶段需要比单一 2500 val 更稳的判断，例如 K-fold/OOF 或测试分布适配，而不是继续只按 2500 val 末位提交。
+
+### reranker 主模型 x-tta 负面实验（2026-06-19）
+
+目标：
+
+- 参考 `origin/feature/glyph-reranker-98.72` 的三视图水平 TTA 思路，在本分支 reranker 内独立验证是否改善当前四主模型 + glyph reranker。
+- 不复用旧五视图 TTA 路线；第二阶段计划已记录五视图平移 TTA 曾略降。
+
+源码改动：
+
+- `eval_reranker.py` 新增 `average_primary_logits(..., x_tta=True)`：
+  - 三个水平视图：`dx = 0, -4, +4`
+  - 默认关闭，不改变既有行为。
+- `eval_reranker.py` / `predict_reranker.py` 增加 `--x-tta` CLI 参数。
+- `predict_reranker.py` 生成 submission 时复用与 eval 相同的 `average_primary_logits`，避免评估/预测不一致。
+- `test_glyph_reranker.py` 增加：
+  - eval parser 支持 `--x-tta`
+  - predict parser 支持 `--x-tta`
+  - `average_primary_logits` 确认会跑 3 个水平视图并平均 logits。
+
+验证：
+
+- 目标测试：`python -m unittest test_glyph_reranker.GlyphRerankerTests.test_reranker_eval_parser_accepts_primary_weights test_glyph_reranker.GlyphRerankerTests.test_average_primary_logits_uses_three_horizontal_tta_views test_glyph_reranker.GlyphRerankerTests.test_predict_reranker_parser_accepts_submission_options`
+- 结果：`3 OK`
+
+本地 reranker 搜索：
+
+- 主模型仍使用四模型 beam：
+  - `local_v2hi_seed61`
+  - `local_v2hi_seed62`
+  - `local_wide_seed51_cache_50ep_20260618`
+  - `local_k5_seed52`
+- 主模型权重：
+  - char：`0.20 | 0.20 | 0.42 | 0.18`
+  - color：`0 | 0.34 | 0 | 0.66`
+- `g66 + g67_all + x-tta`：
+  - base exact：`2473/2500 = 0.9892`
+  - best alpha：`top_k=2, alpha=1.40`
+  - rerank exact：`2477/2500 = 0.9908`
+  - override positions：`46`
+- `g67_all + g68_redline + x-tta`：
+  - base exact：`2473/2500 = 0.9892`
+  - best alpha：`top_k=2, alpha=0.70`
+  - rerank exact：`2475/2500 = 0.9900`
+  - override positions：`32`
+- `g66 + g67_all + g68_redline + x-tta`：
+  - base exact：`2473/2500 = 0.9892`
+  - best alpha：`top_k=2, alpha=1.15`
+  - rerank exact：`2476/2500 = 0.9904`
+  - override positions：`38`
+- selective rerank：均未超过 base exact。
+
+结论：
+
+- x-tta 在当前本地验证集是负收益：base 从 `2474` 降到 `2473`，最佳也只到 `2477/2500`。
+- 不生成 submission，不消耗 Kaggle 额度。
+- 保留 `--x-tta` 作为可复现实验开关，但后续默认不启用。
+- 下一步优先转向测试分布适配/伪标签，而不是继续在单一 val 上做小幅 rerank 调参。

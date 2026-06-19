@@ -11,6 +11,10 @@ import config
 from dataset import build_train_dataset, decode_prediction, deterministic_split_indices
 from ensemble import average_model_logits, load_models
 from glyph import glyph_probabilities, load_glyph_model
+from tta import translate_images
+
+
+X_TTA_DX = (0, -4, 4)
 
 
 def rerank(primary_prob: torch.Tensor, glyph_prob: torch.Tensor, top_k: int, alpha: float) -> torch.Tensor:
@@ -39,6 +43,33 @@ def selective_rerank(
 
 
 @torch.no_grad()
+def average_primary_logits(
+    primary_models: list[torch.nn.Module],
+    images: torch.Tensor,
+    char_weights: list[float] | None = None,
+    color_weights: list[float] | None = None,
+    x_tta: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    views = (
+        tuple(images if dx == 0 else translate_images(images, dx=dx, dy=0) for dx in X_TTA_DX)
+        if x_tta
+        else (images,)
+    )
+    char_sum = None
+    color_sum = None
+    for view in views:
+        char_logits, color_logits = average_model_logits(
+            primary_models,
+            view,
+            char_weights=char_weights,
+            color_weights=color_weights,
+        )
+        char_sum = char_logits if char_sum is None else char_sum + char_logits
+        color_sum = color_logits if color_sum is None else color_sum + color_logits
+    return char_sum / len(views), color_sum / len(views)
+
+
+@torch.no_grad()
 def collect_probabilities(
     checkpoints: list[Path],
     glyph_checkpoints: list[Path],
@@ -46,6 +77,7 @@ def collect_probabilities(
     char_weights: list[float] | None = None,
     color_weights: list[float] | None = None,
     batch_size: int = config.BATCH_SIZE,
+    x_tta: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     dataset = build_train_dataset(cache_in_ram=False)
     _, val_indices = deterministic_split_indices(len(dataset), seed=config.SPLIT_SEED)
@@ -65,11 +97,12 @@ def collect_probabilities(
     color_targets = []
     for images, char_target, color_target in loader:
         images = images.to(device, non_blocking=True)
-        char_logits, color_logits = average_model_logits(
+        char_logits, color_logits = average_primary_logits(
             primary_models,
             images,
             char_weights=char_weights,
             color_weights=color_weights,
+            x_tta=x_tta,
         )
         primary_probs.append(F.softmax(char_logits, dim=-1).cpu())
         color_probs.append(F.softmax(color_logits, dim=-1).cpu())
@@ -98,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--color-weights", type=float, nargs="+")
     parser.add_argument("--top-k", type=int, nargs="+", default=[2, 3, 5])
     parser.add_argument("--alpha-max", type=float, default=2.0)
+    parser.add_argument("--x-tta", action="store_true")
     return parser
 
 
@@ -110,6 +144,7 @@ def main() -> None:
         device,
         char_weights=args.char_weights,
         color_weights=args.color_weights,
+        x_tta=args.x_tta,
     )
     true_color = color_target
     for top_k in args.top_k:

@@ -112,11 +112,41 @@ class GlyphRerankerTests(unittest.TestCase):
                 "--color-weights",
                 "0.1",
                 "0.9",
+                "--x-tta",
             ]
         )
 
         self.assertEqual(args.char_weights, [0.2, 0.8])
         self.assertEqual(args.color_weights, [0.1, 0.9])
+        self.assertTrue(args.x_tta)
+
+    def test_average_primary_logits_uses_three_horizontal_tta_views(self) -> None:
+        from eval_reranker import average_primary_logits
+
+        class LeftProbe(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.left_values: list[float] = []
+
+            def forward(self, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+                self.left_values.append(float(images[:, :, :, 0].sum().item()))
+                batch = images.shape[0]
+                char = torch.zeros(batch, config.NUM_POSITIONS, config.NUM_CHARS)
+                color = torch.zeros(batch, config.NUM_POSITIONS, config.NUM_COLORS)
+                char[..., config.CHAR_TO_IDX["A"]] = self.left_values[-1]
+                color[..., config.RED_INDEX] = self.left_values[-1]
+                return char, color
+
+        images = torch.zeros(1, 3, config.IMAGE_HEIGHT, config.IMAGE_WIDTH)
+        images[:, :, :, :4] = 1.0
+        model = LeftProbe()
+
+        char_logits, color_logits = average_primary_logits([model], images, x_tta=True)
+
+        self.assertEqual(len(model.left_values), 3)
+        self.assertEqual(model.left_values, [float(3 * config.IMAGE_HEIGHT), 0.0, float(3 * config.IMAGE_HEIGHT)])
+        self.assertAlmostEqual(float(char_logits[0, 0, config.CHAR_TO_IDX["A"]]), sum(model.left_values) / 3)
+        self.assertAlmostEqual(float(color_logits[0, 0, config.RED_INDEX]), sum(model.left_values) / 3)
 
     def test_train_glyph_parser_accepts_local_options(self) -> None:
         from train_glyph import build_parser
@@ -195,6 +225,7 @@ class GlyphRerankerTests(unittest.TestCase):
                 "0.2",
                 "--glyph-margin-min",
                 "0.5",
+                "--x-tta",
                 "--output",
                 "submission.csv",
             ]
@@ -203,6 +234,7 @@ class GlyphRerankerTests(unittest.TestCase):
         self.assertEqual(args.char_weights, [0.2, 0.8])
         self.assertEqual(args.color_weights, [0.1, 0.9])
         self.assertTrue(args.selective)
+        self.assertTrue(args.x_tta)
         self.assertEqual(str(args.output), "submission.csv")
 
 
