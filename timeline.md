@@ -2023,3 +2023,69 @@ glyph seed76 reranker 搜索与 Kaggle 提交受限（2026-06-20 凌晨）：
   - 当前状态：
     - 这是 Kaggle 每日额度限制，不是 submission 格式错误。
     - 候选 submission 已在本地生成并同步到根目录，等 UTC 次日额度恢复后可直接提交。
+
+glyph seed76 候选再次提交受限（2026-06-20）：
+
+- 继续提交当前根目录 `submission.csv`：
+  - 命令：`.kaggle_venv\Scripts\kaggle.exe competitions submit -c verification-red-code -f submission.csv -m "local stage2 ema99s75 g66 g67 g76 rerank alpha155"`
+  - CLI 仍返回 `400 Bad Request`。
+- 根因确认：
+  - 直接调用 Kaggle Python API 读取响应体：
+  - `Submission not allowed: Your team has used its daily Submission allowance (5) today, please try again tomorrow UTC (7.9 hours from now).`
+- 决策：
+  - 该候选仍保持为当前待提交版本，不改动 `submission.csv`。
+  - Kaggle public 分数暂时不可得；继续做本地优化，等额度恢复后优先提交当前 `g66+g67+g76 alpha155` 候选。
+
+glyph seed77 hires red-gap-redline 训练与新候选（2026-06-20）：
+
+- 背景：
+  - 参考 `origin/feature/glyph-reranker-98.72` 的最终有效路线使用两个 `hires + GAP + red input + red-line augmentation` glyph seed。
+  - 本分支此前只有 seed76 一个同配方 glyph；因此新增第二个同配方 seed77。
+- 训练：
+  - run：`local_glyph_seed77_hires_red_gap_redline050`
+  - 命令：
+    - `python -u train_glyph.py --epochs 30 --seed 77 --run-name local_glyph_seed77_hires_red_gap_redline050 --input-mode red --hires --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --red-line-aug 0.5`
+  - 第一次前台训练因 90 分钟超时中断，完整落盘到 epoch 15：
+    - epoch 13：阶段 best val_acc `0.99021`
+    - epoch 15：val_acc `0.93805`
+  - 从 `last.pt` 恢复后完整跑到 epoch 30：
+    - epoch 17：val_acc `0.99342`
+    - epoch 21：val_acc `0.99502`
+    - epoch 23：best val_acc `0.99631`
+    - epoch 25：val_acc `0.99535`
+    - epoch 30：val_acc `0.99486`
+  - 结论：seed77 单 glyph 已超过 seed68 的 `0.99535` 和 seed76 的 `0.99486`，值得进入 reranker 组合。
+- 本地 reranker 搜索：
+  - 共用 primary：
+    - `local_v2hi_seed61`
+    - `local_v2hi_seed62`
+    - `local_v2hi_ema99_seed75`
+    - `local_wide_seed51_cache_50ep_20260618`
+    - `local_k5_seed52`
+  - 共用权重：
+    - char weights：`0.17 0.13 0.20 0.34 0.16`
+    - color weights：`0 0.25 0.20 0 0.55`
+  - 组合结果：
+    - `g66 + g67 + g76 + g77`：`2479/2500 = 0.99160`，`alpha=1.25`
+    - `g66 + g67 + g77`：`2479/2500 = 0.99160`，`alpha=1.45`
+    - `g67 + g76 + g77`：`2478/2500 = 0.99120`，`alpha=0.60`
+    - `g66 + g76 + g77`：`2481/2500 = 0.99240`，`alpha=2.00`
+    - `g76 + g77`：`top_k=2` 为 `2481/2500 = 0.99240`，`alpha=1.75`；`top_k=3` 为 `2482/2500 = 0.99280`，`alpha=1.95`
+  - 结论：只保留两个同配方 hires red-line glyph（seed76 + seed77）最优，比上一版 `2479/2500` 再多 3 个 holdout 样本。
+- submission 生成：
+  - 命令：
+    - `python predict_reranker.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_v2hi_ema99_seed75/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --glyph-checkpoints outputs/runs/local_glyph_seed76_hires_red_gap_redline050/checkpoints/best.pt outputs/runs/local_glyph_seed77_hires_red_gap_redline050/checkpoints/best.pt --char-weights 0.17 0.13 0.20 0.34 0.16 --color-weights 0 0.25 0.20 0 0.55 --top-k 3 --alpha 1.95 --output ..\submissions\submission_local_stage2_ema99s75_g76_g77_rerank_top3_alpha195.csv`
+  - 输出：`submissions/submission_local_stage2_ema99s75_g76_g77_rerank_top3_alpha195.csv`
+  - 根目录提交副本：`submission.csv`
+  - 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+  - CSV 检查：`5000` 行，空 label `0`，异常 id `0`，重复 id `0`。
+  - 与上一版 `g66+g67+g76 alpha155` 相比，预测差异为 22 行。
+- Kaggle 提交：
+  - 尝试命令：
+    - `.kaggle_venv\Scripts\kaggle.exe competitions submit -c verification-red-code -f submission.csv -m "local stage2 ema99s75 g76 g77 rerank top3 alpha195"`
+  - 结果：未产生提交 ref，API 返回 `400 Bad Request`。
+  - 根因确认：
+    - `Submission not allowed: Your team has used its daily Submission allowance (5) today, please try again tomorrow UTC (4.4 hours from now).`
+  - 当前状态：
+    - `submission.csv` 已更新为本地最强 `g76+g77 top3 alpha195` 候选。
+    - 等 Kaggle 额度恢复后应优先提交这一版，而不是上一版 `g66+g67+g76 alpha155`。
