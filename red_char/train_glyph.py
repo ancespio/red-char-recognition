@@ -75,6 +75,7 @@ def save_checkpoint(
             "crop_width": args.crop_width,
             "all_glyphs": args.all_glyphs,
             "augment": args.augment,
+            "red_line_aug": args.red_line_aug,
         },
         path,
     )
@@ -92,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--head-mode", choices=["flat", "gap"], default="flat")
     parser.add_argument("--crop-width", type=int, default=GLYPH_CROP_WIDTH)
     parser.add_argument("--all-glyphs", action="store_true")
+    parser.add_argument("--red-line-aug", type=float, default=0.0)
     parser.add_argument("--augment", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
@@ -119,6 +121,7 @@ def main() -> None:
         train_indices,
         red_only=not args.all_glyphs,
         augment=args.augment,
+        red_line_p=args.red_line_aug,
         crop_width=args.crop_width,
     )
     val_ds = GlyphDataset(base, val_indices, red_only=True, augment=False, crop_width=args.crop_width)

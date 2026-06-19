@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 import config
+from dataset import TrainAugmentation
 from model import count_parameters
 
 
@@ -137,6 +138,8 @@ class GlyphRerankerTests(unittest.TestCase):
                 "72",
                 "--num-workers",
                 "0",
+                "--red-line-aug",
+                "0.5",
                 "--no-augment",
                 "--resume",
                 "runs/glyph/checkpoints/last.pt",
@@ -151,8 +154,25 @@ class GlyphRerankerTests(unittest.TestCase):
         self.assertEqual(args.head_mode, "gap")
         self.assertEqual(args.crop_width, 72)
         self.assertEqual(args.num_workers, 0)
+        self.assertEqual(args.red_line_aug, 0.5)
         self.assertFalse(args.augment)
         self.assertEqual(args.resume, Path("runs/glyph/checkpoints/last.pt"))
+
+    def test_red_line_augmentation_draws_red_pixels(self) -> None:
+        transform = TrainAugmentation(
+            degrees=0.0,
+            translate=(0.0, 0.0),
+            noise_std=0.0,
+            red_line_p=1.0,
+        )
+        image = torch.ones(3, config.IMAGE_HEIGHT, 64)
+
+        augmented = transform(image)
+
+        self.assertEqual(augmented.shape, image.shape)
+        self.assertTrue(torch.all((0.0 <= augmented) & (augmented <= 1.0)))
+        red_dominant = (augmented[0] > augmented[1]) & (augmented[0] > augmented[2])
+        self.assertGreater(int(red_dominant.sum().item()), 0)
 
     def test_predict_reranker_parser_accepts_submission_options(self) -> None:
         from predict_reranker import build_parser

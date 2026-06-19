@@ -51,6 +51,7 @@ class GlyphDataset(Dataset):
         image_indices: list[int],
         red_only: bool = True,
         augment: bool = False,
+        red_line_p: float = 0.0,
         crop_width: int = GLYPH_CROP_WIDTH,
     ) -> None:
         self.base = base
@@ -63,7 +64,12 @@ class GlyphDataset(Dataset):
             for position, color in enumerate(sample.color):
                 if not red_only or color == "r":
                     self.items.append((image_idx, position))
-        self.transform = TrainAugmentation.from_preset("medium") if augment else None
+        if augment:
+            augment_values = dict(config.AUGMENT_PRESETS["medium"])
+            augment_values["red_line_p"] = red_line_p
+            self.transform = TrainAugmentation(**augment_values)
+        else:
+            self.transform = None
 
     def __len__(self) -> int:
         return len(self.items)

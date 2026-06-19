@@ -131,6 +131,7 @@ class TrainAugmentation:
         noise_std: float = config.AUGMENT_NOISE_STD,
         erase_scale: tuple[float, float] | None = None,
         erase_prob: float = 0.25,
+        red_line_p: float = 0.0,
     ) -> None:
         self.affine = RandomAffine(
             degrees=degrees,
@@ -141,6 +142,7 @@ class TrainAugmentation:
         self.noise_std = noise_std
         self.erase_scale = erase_scale
         self.erase_prob = erase_prob
+        self.red_line_p = red_line_p
 
     @classmethod
     def from_preset(cls, preset: str) -> "TrainAugmentation":
@@ -152,12 +154,42 @@ class TrainAugmentation:
 
     def __call__(self, image: torch.Tensor) -> torch.Tensor:
         augmented = self.affine(image)
+        if self.red_line_p > 0 and torch.rand(()) < self.red_line_p:
+            augmented = self._draw_red_lines(augmented, n=int(torch.randint(1, 4, ()).item()))
         if self.noise_std > 0:
             augmented = augmented + torch.randn_like(augmented) * self.noise_std
         augmented = augmented.clamp_(0.0, 1.0)
         if self.erase_scale is not None and torch.rand(()) < self.erase_prob:
             augmented = self._erase(augmented)
         return augmented
+
+    def _draw_red_lines(self, image: torch.Tensor, n: int) -> torch.Tensor:
+        _, height, width = image.shape
+        out = image.clone()
+        dtype = image.dtype
+        device = image.device
+        yy = torch.arange(height, dtype=dtype, device=device).view(height, 1)
+        xx = torch.arange(width, dtype=dtype, device=device).view(1, width)
+        for _ in range(n):
+            x0 = torch.empty((), dtype=dtype, device=device).uniform_(0, max(width - 1, 1))
+            y0 = torch.empty((), dtype=dtype, device=device).uniform_(0, max(height - 1, 1))
+            angle = torch.empty((), dtype=dtype, device=device).uniform_(-0.6, 0.6)
+            if torch.rand((), device=device) < 0.5:
+                angle = angle + torch.pi
+            dx = torch.cos(angle)
+            dy = torch.sin(angle)
+            distance = ((xx - x0) * (-dy) + (yy - y0) * dx).abs()
+            line_width = torch.empty((), dtype=dtype, device=device).uniform_(0.6, 2.6)
+            mask = (distance <= line_width).to(dtype).unsqueeze(0)
+            color = torch.stack(
+                [
+                    torch.empty((), dtype=dtype, device=device).uniform_(0.55, 1.0),
+                    torch.empty((), dtype=dtype, device=device).uniform_(0.0, 0.45),
+                    torch.empty((), dtype=dtype, device=device).uniform_(0.0, 0.45),
+                ]
+            ).view(3, 1, 1)
+            out = out * (1.0 - mask) + color * mask
+        return out
 
     def _erase(self, image: torch.Tensor) -> torch.Tensor:
         channels, height, width = image.shape

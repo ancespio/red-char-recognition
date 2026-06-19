@@ -1252,3 +1252,212 @@ submission 生成与 Kaggle 结果：
   1. 再训练一个 no-augment glyph seed，观察 public 是否继续随更保守 rerank 上升；
   2. 训练 `all_glyphs + noaug`，看非红位置字符样本是否能改善字符边界；
   3. 做 confusion-group / per-position rerank 搜索，避免全局 alpha 只改少量位置。
+
+### all-glyph glyph seed67 与额度受限提交尝试（2026-06-19）
+
+目标：
+
+- 按上一轮结论验证 `all_glyphs + noaug`：用全部 5 个字符位扩充 glyph 监督，但验证仍只看红字位。
+- 继续排除他人 `submission_sample.csv = 0.98520`，不作为本分支 baseline。
+
+训练：
+
+- run-name：`local_glyph_seed67_all_gap_noaug`
+- 命令：`python -u train_glyph.py --epochs 20 --seed 67 --run-name local_glyph_seed67_all_gap_noaug --input-mode red --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --no-augment --all-glyphs`
+- train_glyphs：`237500`
+- val_glyphs：`6231`
+- best epoch：`18`
+- best red-glyph val_acc：`0.99519`
+- checkpoint：`red_char/outputs/runs/local_glyph_seed67_all_gap_noaug/checkpoints/best.pt`
+
+本地 reranker 搜索：
+
+- 主模型仍使用四模型 beam：
+  - `local_v2hi_seed61`
+  - `local_v2hi_seed62`
+  - `local_wide_seed51_cache_50ep_20260618`
+  - `local_k5_seed52`
+- 主模型权重：
+  - char：`0.20 | 0.20 | 0.42 | 0.18`
+  - color：`0 | 0.34 | 0 | 0.66`
+- base exact：`2474/2500 = 0.9896`
+- seed67 all-glyph 单模型：
+  - best alpha：`top_k=2, alpha=0.70`
+  - rerank exact：`2476/2500 = 0.9904`
+  - override positions：`36`
+- seed66 + seed67 all-glyph ensemble：
+  - best alpha：`top_k=2, alpha=1.50`
+  - rerank exact：`2478/2500 = 0.9912`
+  - override positions：`45`
+- seed65 + seed66 + seed67 all-glyph ensemble：
+  - best alpha：`top_k=2, alpha=0.70`
+  - rerank exact：`2477/2500 = 0.9908`
+  - override positions：`29`
+- selective rerank：三组 glyph 候选均未超过 base exact。
+
+submission 生成：
+
+- 输出：`submissions/submission_local_stage2_glyph66_glyph67all_rerank_alpha150.csv`
+- 根目录提交副本：`submission.csv`
+- 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- CSV 校验：
+  - 数据行：`5000`
+  - 空标签：`0`
+  - 非法字符：`0`
+  - 长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+
+Kaggle 提交尝试：
+
+- 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 glyph66 glyph67all rerank alpha150"`
+- 结果：未生成新 ref。
+- Kaggle API 返回：`Submission not allowed: Your team has used its daily Submission allowance (5) today, please try again tomorrow UTC (3.2 hours from now).`
+- 当前自有 Kaggle public best 仍为：`53818428 = 0.98260`。
+
+结论：
+
+- 本地 exact 已提升到 `0.9912`，是目前本分支最高本地结果。
+- Kaggle 未提交成功的原因是每日提交额度耗尽，不是 CSV 格式错误。
+- 额度恢复后优先提交 `submission_local_stage2_glyph66_glyph67all_rerank_alpha150.csv` 对应的根目录 `submission.csv`。
+
+### 参考分支红线增强移植与 seed68 备选（2026-06-19）
+
+背景：
+
+- 只读查看 `origin/feature/glyph-reranker-98.72`，该分支报告显示高分路线中 `red input + GAP + red-line augmentation` 有效。
+- 该分支分数与提交不作为本分支成绩，只参考局部实现思路。
+
+源码改动：
+
+- `dataset.TrainAugmentation` 增加 `red_line_p`，在几何增强后、噪声前叠加 1-3 条随机红色干扰线。
+- `glyph.GlyphDataset` 增加 `red_line_p`，仅训练集增强时传入；验证集仍不增强。
+- `train_glyph.py` 增加 `--red-line-aug`，并写入 glyph checkpoint 元数据。
+- `test_glyph_reranker.py` 增加：
+  - `TrainAugmentation(red_line_p=1.0)` 红线像素测试；
+  - `train_glyph.py --red-line-aug` CLI 解析测试。
+- 验证：`python -m unittest test_glyph_reranker`，结果 `10 OK`。
+
+训练：
+
+- run-name：`local_glyph_seed68_red_gap_redline050`
+- 命令：`python -u train_glyph.py --epochs 20 --seed 68 --run-name local_glyph_seed68_red_gap_redline050 --input-mode red --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --red-line-aug 0.5`
+- 首次训练 1 小时超时，中断在 epoch 12；随后从 `last.pt` resume 到 epoch 20。
+- best epoch：`16`
+- best red-glyph val_acc：`0.99535`
+- checkpoint：`red_char/outputs/runs/local_glyph_seed68_red_gap_redline050/checkpoints/best.pt`
+
+本地 reranker 搜索：
+
+- base exact：`2474/2500 = 0.9896`
+- seed68 redline 单模型：
+  - best alpha：`top_k=5, alpha=2.30`
+  - rerank exact：`2476/2500 = 0.9904`
+  - override positions：`222`
+- seed66 + seed68 redline：
+  - best alpha：`top_k=3, alpha=2.75`
+  - rerank exact：`2476/2500 = 0.9904`
+  - override positions：`143`
+- seed67 all-glyph + seed68 redline：
+  - best alpha：`top_k=2, alpha=1.15`
+  - rerank exact：`2478/2500 = 0.9912`
+  - override positions：`40`
+- seed66 + seed67 all-glyph + seed68 redline：
+  - best alpha：`top_k=2, alpha=1.45`
+  - rerank exact：`2477/2500 = 0.9908`
+  - override positions：`39`
+- seed65 + seed66 + seed67 all-glyph + seed68 redline：
+  - best alpha：`top_k=2, alpha=0.95`
+  - rerank exact：`2476/2500 = 0.9904`
+  - override positions：`32`
+- selective rerank：均未超过 base exact。
+
+备选 submission：
+
+- 输出：`submissions/submission_local_stage2_glyph67all_glyph68redline_rerank_alpha115.csv`
+- 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- 与当前排队提交 `submission_local_stage2_glyph66_glyph67all_rerank_alpha150.csv` 相比：
+  - 测试集差异行数：`12`
+  - 均为等长字符替换，无长度变化。
+
+结论：
+
+- seed68 redline 提高了单 glyph val_acc，但未把 rerank exact 推过 `2478/2500`。
+- 额度恢复后的优先提交仍建议先交 `glyph66 + glyph67all alpha150`，因为它继承了 seed66 已有 public 正向趋势。
+- 若第一条不涨，再提交 `glyph67all + glyph68redline alpha115` 作为同分、较少 override 的备选。
+
+### all-glyph seed69 追加验证（2026-06-19）
+
+目标：
+
+- 利用 Kaggle 每日额度等待窗口，追加一个 `all_glyphs + noaug` seed，验证 all-glyph 路线是否能继续随 seed 增益。
+
+训练：
+
+- run-name：`local_glyph_seed69_all_gap_noaug`
+- 命令：`python -u train_glyph.py --epochs 20 --seed 69 --run-name local_glyph_seed69_all_gap_noaug --input-mode red --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --no-augment --all-glyphs`
+- train_glyphs：`237500`
+- val_glyphs：`6231`
+- best epoch：`15`
+- best red-glyph val_acc：`0.99294`
+- checkpoint：`red_char/outputs/runs/local_glyph_seed69_all_gap_noaug/checkpoints/best.pt`
+
+本地 reranker 搜索：
+
+- seed69 单模型：
+  - best alpha：`top_k=2, alpha=0.05`
+  - rerank exact：`2474/2500 = 0.9896`
+  - override positions：`2`
+- seed67 all-glyph + seed69：
+  - best alpha：`top_k=2, alpha=1.20`
+  - rerank exact：`2477/2500 = 0.9908`
+  - override positions：`38`
+- seed66 + seed67 all-glyph + seed69：
+  - best alpha：`top_k=2, alpha=2.65`
+  - rerank exact：`2478/2500 = 0.9912`
+  - override positions：`50`
+- seed67 all-glyph + seed68 redline + seed69：
+  - best alpha：`top_k=2, alpha=1.00`
+  - rerank exact：`2478/2500 = 0.9912`
+  - override positions：`33`
+
+结论：
+
+- seed69 单体明显弱于 seed67/68，没有带来超过 `2478/2500` 的本地 exact。
+- 不替换当前优先提交的 `glyph66 + glyph67all alpha150`。
+- `glyph67all + glyph68redline + glyph69 alpha100` 是低 override 备选，但因包含弱 seed69，优先级低于 `glyph67all + glyph68redline alpha115`。
+
+### Kaggle 额度恢复后的三版提交（2026-06-19）
+
+提交 1：glyph66 + glyph67 all-glyph
+
+- 根目录提交副本：`submission.csv`
+- 对应归档：`submissions/submission_local_stage2_glyph66_glyph67all_rerank_alpha150.csv`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 glyph66 glyph67all rerank alpha150"`
+- ref：`53823004`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98320`
+
+提交 2：glyph67 all-glyph + glyph68 redline
+
+- 对应归档：`submissions/submission_local_stage2_glyph67all_glyph68redline_rerank_alpha115.csv`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 glyph67all glyph68redline rerank alpha115"`
+- ref：`53823111`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98320`
+
+提交 3：glyph67 all-glyph + glyph68 redline + glyph69
+
+- 对应归档：`submissions/submission_local_stage2_glyph67all_glyph68redline_glyph69_rerank_alpha100.csv`
+- Kaggle 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 glyph67all glyph68redline glyph69 rerank alpha100"`
+- ref：`53823220`
+- status：`SubmissionStatus.COMPLETE`
+- publicScore：`0.98260`
+
+当前结论：
+
+- 本分支自有最好 Kaggle public：`0.98320`。
+- 最好提交并列：
+  - `53823004`：`glyph66 + glyph67all alpha150`
+  - `53823111`：`glyph67all + glyph68redline alpha115`
+- 低 override 的 `glyph67all + glyph68redline + glyph69 alpha100` 未转化为 public 提升，退回 `0.98260`，说明弱 seed69 平滑并不可靠。
+- 根目录 `submission.csv` 已恢复为 `submission_local_stage2_glyph66_glyph67all_rerank_alpha150.csv`。
+- 当前仍未达到 `99+` 目标；下一阶段需要比单一 2500 val 更稳的判断，例如 K-fold/OOF 或测试分布适配，而不是继续只按 2500 val 末位提交。
