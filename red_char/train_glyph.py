@@ -38,6 +38,10 @@ def resolve_split_indices(n_items: int, fold: int | None, n_folds: int) -> tuple
     return fold_split(n_items, fold=fold, n_folds=n_folds)
 
 
+def resolve_grad_clip_norm() -> float:
+    return float(getattr(config, "GLYPH_GRAD_CLIP_NORM", 5.0))
+
+
 @torch.no_grad()
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float]:
     model.eval()
@@ -144,6 +148,7 @@ def main() -> None:
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=config.ETA_MIN)
     scaler = GradScaler("cuda", enabled=config.AMP and device.type == "cuda")
     use_amp = config.AMP and device.type == "cuda"
+    grad_clip = resolve_grad_clip_norm()
     best_acc = -1.0
     start_epoch = 0
     if args.resume is not None:
@@ -179,8 +184,9 @@ def main() -> None:
                 logits = model(images)
                 loss = F.cross_entropy(logits, targets, label_smoothing=0.02)
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), config.GRAD_CLIP_NORM if hasattr(config, "GRAD_CLIP_NORM") else 5.0)
+            if grad_clip > 0:
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(optimizer)
             scaler.update()
             batch_size = targets.numel()

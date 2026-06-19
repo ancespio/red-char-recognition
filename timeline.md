@@ -1909,3 +1909,117 @@ EMA seed75 训练、候选 submission 与 Kaggle 提交（2026-06-19 续）：
   - 本次提交持平本分支自有最好 `0.98320`，未突破。
   - 训练 recipe（EMA99 + label smoothing + warmup + grad clip）是有效的单模型提升，但当前 public 瓶颈仍在测试分布/决策策略，而不是单一 holdout exact。
   - 后续不建议继续单纯堆同类 v2hi seed；应优先做 OOF 级别的主模型权重/颜色阈值/局部 rerank 选择，或扩展与高分参考路线一致的专项模型。
+
+glyph hires red-gap-redline 路线启动（2026-06-19 续）：
+
+- 背景：
+  - 只读参考 `origin/feature/glyph-reranker-98.72` 的交接文档，最终有效路线为 `hires + GAP + red input + red-line augmentation` 的局部 glyph reranker。
+  - 本分支现有有效 glyph：
+    - `local_glyph_seed66_red_gap_noaug`
+    - `local_glyph_seed67_all_gap_noaug`
+    - `local_glyph_seed68_red_gap_redline050`
+  - 其中 seed68 使用 `red + GAP + red-line`，但没有启用 `--hires`；参考分支的最终组合明确包含 `--hires`。
+- 训练入口修复：
+  - 上轮主训练 recipe 新增 `GRAD_CLIP_NORM=0.0` 后，`train_glyph.py` 旧逻辑会把该值传给 `clip_grad_norm_`，导致新 glyph 训练梯度被裁成 0。
+  - TDD 修复：
+    - 新增测试：`test_glyph_reranker.GlyphRerankerTests.test_train_glyph_uses_positive_default_grad_clip`
+    - RED：修复前导入 `resolve_grad_clip_norm` 失败。
+    - GREEN：新增 `config.GLYPH_GRAD_CLIP_NORM = 5.0` 与 `train_glyph.resolve_grad_clip_norm()`；训练循环仅在裁剪阈值为正数时执行 clip。
+  - 验证：
+    - `python -m unittest test_glyph_reranker.GlyphRerankerTests.test_train_glyph_uses_positive_default_grad_clip`：`1 OK`
+    - `python -m unittest test_glyph_reranker`：`12 OK`
+- 下一步训练：
+  - run：`local_glyph_seed76_hires_red_gap_redline050`
+  - 命令：
+    - `python -u train_glyph.py --epochs 30 --seed 76 --run-name local_glyph_seed76_hires_red_gap_redline050 --input-mode red --hires --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --red-line-aug 0.5`
+  - 若 red-glyph val_acc 明显超过 seed68 的 `0.99535`，再纳入当前主模型 + glyph reranker 本地搜索；否则止损不提交 Kaggle。
+
+glyph hires red-gap-redline seed76 分段训练记录（2026-06-19 夜）：
+
+- 第一次前台训练因 30 分钟超时中断，完整落盘到 epoch 4：
+  - epoch 1：val_acc `0.21489`
+  - epoch 2：val_acc `0.78479`
+  - epoch 3：val_acc `0.81416`
+  - epoch 4：val_acc `0.86663`
+- 从 `outputs/runs/local_glyph_seed76_hires_red_gap_redline050/checkpoints/last.pt` 恢复继续训练。
+- 第二次前台训练因 30 分钟超时中断，完整落盘到 epoch 8：
+  - epoch 5：val_acc `0.95506`
+  - epoch 6：val_acc `0.96245`
+  - epoch 7：当前 best val_acc `0.96277`
+  - epoch 8：val_acc `0.93404`
+- 决策：
+  - 当前 seed76 仍处在早期爬升阶段，尚未达到可用于 reranker 的门槛。
+  - 继续从 `last.pt` 分段恢复训练；若后续仍长期低于 seed68 的 `0.99535`，则停止该路线，不生成 submission、不提交 Kaggle。
+
+glyph hires red-gap-redline seed76 继续训练记录（2026-06-19 夜）：
+
+- 第三次从 `last.pt` 恢复训练，因 60 分钟超时中断，完整落盘到 epoch 18：
+  - epoch 9：val_acc `0.98170`
+  - epoch 10：val_acc `0.95731`
+  - epoch 11：val_acc `0.97849`
+  - epoch 12：val_acc `0.98411`
+  - epoch 13：val_acc `0.98235`
+  - epoch 14：val_acc `0.95041`
+  - epoch 15：val_acc `0.99021`
+  - epoch 16：当前 best val_acc `0.99069`
+  - epoch 17：val_acc `0.98764`
+  - epoch 18：val_acc `0.98957`
+- 决策：
+  - seed76 已进入可学习区间，但距离 seed68 的 `0.99535` 仍有明显差距。
+  - 继续跑完计划的 30 epoch；若最终仍未达到或接近 seed68，则不进入 Kaggle 提交流程。
+
+glyph hires red-gap-redline seed76 完训（2026-06-19 夜）：
+
+- 第四次从 `last.pt` 恢复训练，完整跑到 epoch 30：
+  - epoch 19：val_acc `0.99326`
+  - epoch 20：val_acc `0.99165`
+  - epoch 21：val_acc `0.98828`
+  - epoch 22：val_acc `0.99246`
+  - epoch 23：val_acc `0.96533`
+  - epoch 24：best val_acc `0.99486`
+  - epoch 25：val_acc `0.99294`
+  - epoch 26：val_acc `0.96822`
+  - epoch 27：val_acc `0.98700`
+  - epoch 28：val_acc `0.98909`
+  - epoch 29：val_acc `0.99005`
+  - epoch 30：val_acc `0.98925`
+- 结论：
+  - seed76 未超过 seed68 的 `0.99535`，但差距只有 `0.00049`，且新增了 `--hires` 路径多样性。
+  - 不直接提交 Kaggle；先做本地 reranker 搜索验证。只有超过或至少稳定持平历史 `2478/2500 = 0.99120` 且有组合差异依据，才考虑生成 submission。
+
+glyph seed76 reranker 搜索与 Kaggle 提交受限（2026-06-20 凌晨）：
+
+- 本地 reranker 搜索：
+  - primary：
+    - `local_v2hi_seed61`
+    - `local_v2hi_seed62`
+    - `local_v2hi_ema99_seed75`
+    - `local_wide_seed51_cache_50ep_20260618`
+    - `local_k5_seed52`
+  - glyph：
+    - `local_glyph_seed66_red_gap_noaug`
+    - `local_glyph_seed67_all_gap_noaug`
+    - `local_glyph_seed76_hires_red_gap_redline050`
+  - char weights：`0.17 0.13 0.20 0.34 0.16`
+  - color weights：`0 0.25 0.20 0 0.55`
+  - 搜索结果：
+    - `top_k=2`：`2479/2500 = 0.99160`，`alpha=1.55`
+    - `top_k=3`：`2479/2500 = 0.99160`，`alpha=1.55`
+  - 结论：比本分支历史最高 `2478/2500 = 0.99120` 多 1 个 holdout 样本，具备生成候选 submission 的本地依据。
+- submission 生成：
+  - 命令：
+    - `python predict_reranker.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_v2hi_ema99_seed75/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --glyph-checkpoints outputs/runs/local_glyph_seed66_red_gap_noaug/checkpoints/best.pt outputs/runs/local_glyph_seed67_all_gap_noaug/checkpoints/best.pt outputs/runs/local_glyph_seed76_hires_red_gap_redline050/checkpoints/best.pt --char-weights 0.17 0.13 0.20 0.34 0.16 --color-weights 0 0.25 0.20 0 0.55 --top-k 2 --alpha 1.55 --output ..\submissions\submission_local_stage2_ema99s75_g66_g67_g76_rerank_alpha155.csv`
+  - 输出：`submissions/submission_local_stage2_ema99s75_g66_g67_g76_rerank_alpha155.csv`
+  - 根目录提交副本：`submission.csv`
+  - 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+  - CSV 检查：`5000` 行，空 label `0`，异常 id `0`，重复 id `0`。
+- Kaggle 提交：
+  - 尝试命令：
+    - `.kaggle_venv\Scripts\kaggle.exe competitions submit -c verification-red-code -f submission.csv -m "local stage2 ema99s75 g66 g67 g76 rerank alpha155"`
+  - 结果：未产生提交 ref，API 返回 `400 Bad Request`。
+  - 根因确认：
+    - 直接调用 Kaggle Python API 读取响应体：
+    - `Submission not allowed: Your team has used its daily Submission allowance (5) today, please try again tomorrow UTC (8.0 hours from now).`
+  - 当前状态：
+    - 这是 Kaggle 每日额度限制，不是 submission 格式错误。
+    - 候选 submission 已在本地生成并同步到根目录，等 UTC 次日额度恢复后可直接提交。

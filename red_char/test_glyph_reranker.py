@@ -237,6 +237,11 @@ class GlyphRerankerTests(unittest.TestCase):
         self.assertTrue(args.x_tta)
         self.assertEqual(str(args.output), "submission.csv")
 
+    def test_train_glyph_uses_positive_default_grad_clip(self) -> None:
+        from train_glyph import resolve_grad_clip_norm
+
+        self.assertGreater(resolve_grad_clip_norm(), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
