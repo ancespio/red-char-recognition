@@ -1627,3 +1627,65 @@ Kaggle 提交尝试：
   - 该只读扫描 5 分钟未完成，被工具超时终止；无结果，不作为提交依据。
 - 后续建议：
   - 若继续第二阶段，应把下一步重点从单 split val 调参转到 OOF/K-fold 评估或全量真标签训练候选，而不是继续提交 `2478` 附近的同分变体。
+
+### selective rerank 高效扫描与 resblock 正式训练（2026-06-19）
+
+目标：
+
+- 继续推进第二阶段计划，不把 `0.98520` 或其他分支成绩计入本分支。
+- 先用本地验证筛掉无效 rerank 阈值，避免继续用 Kaggle public 做调参。
+- 补齐第二阶段计划中尚未正式训练的 `resblock` 架构多样性模型。
+
+selective rerank 本地扫描：
+
+- 使用现有 `collect_probabilities` / `selective_rerank`，临时脚本改用向量化 exact 统计，避免上一轮字符串循环超时。
+- 扫描颜色策略：`argmax` 与 red prob threshold `0.20~0.50`。
+- 结果：
+  - `orig_g66_g67`：
+    - base：`2474/2500`
+    - alpha rerank：`2478/2500`，`top_k=2, alpha=1.50`
+    - selective：`2474/2500`
+  - `orig_g67_g68`：
+    - base：`2474/2500`
+    - alpha rerank：`2478/2500`，`top_k=2, alpha=1.15`
+    - selective：`2474/2500`
+  - `pseudo5_g66_g67`：
+    - base：`2474/2500`
+    - alpha rerank：`2478/2500`，`top_k=2, alpha=1.40`
+    - selective：`2474/2500`
+- 结论：
+  - selective margin rerank 和 red-threshold 在当前自有模型组合上没有本地收益。
+  - 不生成 submission，不消耗 Kaggle 提交额度。
+
+resblock 正式训练启动：
+
+- 训练目标：`local_resblock_seed54`
+- 参数：
+  - `--epochs 50`
+  - `--seed 54`
+  - `--model-size resblock`
+  - `--augment-preset light`
+  - `--red-char-weight 2.5`
+  - `--num-workers 0`
+  - `--no-cache-in-ram`
+- wrapper：
+  - `red_char/outputs/runs/local_resblock_seed54/run_training.ps1`
+  - 使用 `$PSScriptRoot` 定位 `red_char`，避免长命令传参导致后台静默退出。
+- 训练完成后再评估是否加入当前四主模型 + glyph reranker；若本地不能超过 `2478/2500`，不提交 Kaggle。
+
+resblock 训练结果与止损：
+
+- 后台 wrapper 结果：
+  - `run_training.ps1` 与 `run_training.cmd` 均只写出模型信息后退出，未进入完整训练循环。
+  - 前台直接运行 `train.py` 可正常训练，因此本轮改用前台分段 resume。
+- smoke check：
+  - 命令：`python -u train.py --epochs 1 --augment --seed 54 --run-name local_resblock_seed54_smoke --red-char-weight 2.5 --model-size resblock --augment-preset light --num-workers 0 --no-cache-in-ram`
+  - 结果：完成 1 epoch，验证训练入口可用。
+- 正式训练：
+  - 通过 `--resume outputs/runs/local_resblock_seed54/checkpoints/last.pt` 分段续跑。
+  - 已完成到 epoch 18。
+  - 当前最好：epoch 17，exact `0.96160`，char_acc `0.97296`，red_acc `0.99960`，color_acc `0.97256`。
+- 决策：
+  - 该模型明显低于第二阶段计划中进入 ensemble 的本地门槛 `0.975`，也低于现有主模型组合。
+  - 本轮停止继续训练 `local_resblock_seed54`，不生成 submission，不提交 Kaggle。
+  - 当前自有 Kaggle 最好仍为 `0.98320`；`0.98520` 及其他更高分支不计入本分支成果。
