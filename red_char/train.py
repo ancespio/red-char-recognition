@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import torch
 from torch import nn
 from torch.amp import GradScaler, autocast
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -40,6 +41,24 @@ class RunPaths:
     def ensure(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+class ModelEMA:
+    def __init__(self, model: nn.Module, decay: float) -> None:
+        self.module = deepcopy(model).eval()
+        for param in self.module.parameters():
+            param.requires_grad_(False)
+        self.decay = decay
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        ema_state = self.module.state_dict()
+        for key, value in model.state_dict().items():
+            shadow = ema_state[key]
+            if shadow.dtype.is_floating_point:
+                shadow.mul_(self.decay).add_(value.detach(), alpha=1.0 - self.decay)
+            else:
+                shadow.copy_(value)
 
 
 def resolve_run_paths(run_name: str | None, output_root: Path = config.OUTPUT_DIR) -> RunPaths:
@@ -115,6 +134,9 @@ def train_one_epoch(
     device: torch.device,
     use_amp: bool,
     red_char_weight: float = 1.0,
+    label_smoothing: float = config.LABEL_SMOOTHING,
+    ema: ModelEMA | None = None,
+    grad_clip: float = config.GRAD_CLIP_NORM,
     steps_limit: int | None = None,
 ) -> float:
     model.train()
@@ -134,10 +156,16 @@ def train_one_epoch(
                 char_targets,
                 color_targets,
                 red_char_weight=red_char_weight,
+                label_smoothing=label_smoothing,
             )
         scaler.scale(loss).backward()
+        if grad_clip and grad_clip > 0:
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         scaler.step(optimizer)
         scaler.update()
+        if ema is not None:
+            ema.update(model)
 
         batch_size = images.size(0)
         total_loss += loss.item() * batch_size
@@ -148,9 +176,20 @@ def train_one_epoch(
     return total_loss / max(total_items, 1)
 
 
+def build_scheduler(optimizer: AdamW, epochs: int, warmup_epochs: int, eta_min: float = config.ETA_MIN):
+    warmup_epochs = max(0, min(warmup_epochs, epochs - 1))
+    if warmup_epochs == 0:
+        return CosineAnnealingLR(optimizer, T_max=epochs, eta_min=eta_min)
+    warmup = LinearLR(optimizer, start_factor=0.05, end_factor=1.0, total_iters=warmup_epochs)
+    cosine = CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs, eta_min=eta_min)
+    return SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs])
+
+
 def save_checkpoint(
     path,
     model,
+    checkpoint_model,
+    ema,
     optimizer,
     scheduler,
     epoch: int,
@@ -165,10 +204,18 @@ def save_checkpoint(
     model_size: str,
     fold: int | None,
     n_folds: int,
+    lr: float,
+    use_ema: bool,
+    ema_decay: float,
+    warmup_epochs: int,
+    grad_clip: float,
+    label_smoothing: float,
 ) -> None:
     torch.save(
         {
-            "state_dict": model.state_dict(),
+            "state_dict": (checkpoint_model or model).state_dict(),
+            "raw_state_dict": model.state_dict(),
+            "ema_state_dict": ema.module.state_dict() if ema is not None else None,
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "epoch": epoch,
@@ -180,7 +227,7 @@ def save_checkpoint(
                 "val_ratio": config.VAL_RATIO,
                 "batch_size": config.BATCH_SIZE,
                 "epochs": config.EPOCHS,
-                "lr": config.LR,
+                "lr": lr,
                 "weight_decay": config.WEIGHT_DECAY,
                 "color_loss_weight": config.COLOR_LOSS_WEIGHT,
                 "red_char_weight": red_char_weight,
@@ -190,6 +237,11 @@ def save_checkpoint(
                 "run_name": run_name,
                 "fold": fold,
                 "n_folds": n_folds,
+                "use_ema": use_ema,
+                "ema_decay": ema_decay,
+                "warmup_epochs": warmup_epochs,
+                "grad_clip": grad_clip,
+                "label_smoothing": label_smoothing,
             },
             "train_hash": filename_hash(train_names),
             "val_hash": filename_hash(val_names),
@@ -204,9 +256,12 @@ def restore_training_state(
     optimizer: AdamW,
     scheduler,
     device: torch.device,
+    ema: ModelEMA | None = None,
 ) -> tuple[int, float]:
     payload = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(payload["state_dict"])
+    model.load_state_dict(payload.get("raw_state_dict") or payload["state_dict"])
+    if ema is not None and payload.get("ema_state_dict") is not None:
+        ema.module.load_state_dict(payload["ema_state_dict"])
     if "optimizer" in payload and payload["optimizer"] is not None:
         optimizer.load_state_dict(payload["optimizer"])
     if scheduler is not None and payload.get("scheduler") is not None:
@@ -276,14 +331,16 @@ def run_training(args: argparse.Namespace) -> None:
     )
     assert params > 5_000_000
 
-    optimizer = AdamW(model.parameters(), lr=config.LR, weight_decay=config.WEIGHT_DECAY)
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=config.WEIGHT_DECAY)
+    use_ema = args.ema and not args.overfit_sanity
+    ema = ModelEMA(model, args.ema_decay) if use_ema else None
     if not args.overfit_sanity:
-        scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=config.ETA_MIN)
+        scheduler = build_scheduler(optimizer, epochs=epochs, warmup_epochs=args.warmup_epochs)
     scaler = GradScaler("cuda", enabled=config.AMP and device.type == "cuda")
     start_epoch = 0
     best_exact = -1.0
     if args.resume is not None:
-        start_epoch, best_exact = restore_training_state(args.resume, model, optimizer, scheduler, device)
+        start_epoch, best_exact = restore_training_state(args.resume, model, optimizer, scheduler, device, ema=ema)
         best_checkpoint = run_paths.checkpoint_dir / "best.pt"
         if best_checkpoint.exists():
             best_payload = torch.load(best_checkpoint, map_location="cpu")
@@ -307,9 +364,13 @@ def run_training(args: argparse.Namespace) -> None:
             device,
             use_amp,
             red_char_weight=args.red_char_weight,
+            label_smoothing=0.0 if args.overfit_sanity else args.label_smoothing,
+            ema=ema,
+            grad_clip=0.0 if args.overfit_sanity else args.grad_clip,
             steps_limit=steps_limit,
         )
-        val_loss, metrics = evaluate_loader(model, val_loader, device, red_char_weight=args.red_char_weight)
+        eval_model = ema.module if ema is not None else model
+        val_loss, metrics = evaluate_loader(eval_model, val_loader, device, red_char_weight=args.red_char_weight)
         lr = optimizer.param_groups[0]["lr"]
         if scheduler is not None:
             scheduler.step()
@@ -334,10 +395,16 @@ def run_training(args: argparse.Namespace) -> None:
             "augment_preset": args.augment_preset,
             "red_char_weight": args.red_char_weight,
             "model_size": args.model_size,
+            "use_ema": use_ema,
+            "warmup_epochs": args.warmup_epochs,
+            "grad_clip": args.grad_clip,
+            "label_smoothing": 0.0 if args.overfit_sanity else args.label_smoothing,
         }
         save_checkpoint(
             run_paths.checkpoint_dir / "last.pt",
             model,
+            model,
+            ema,
             optimizer,
             scheduler,
             epoch,
@@ -352,12 +419,20 @@ def run_training(args: argparse.Namespace) -> None:
             args.model_size,
             args.fold,
             args.n_folds,
+            args.lr,
+            use_ema,
+            args.ema_decay,
+            args.warmup_epochs,
+            args.grad_clip,
+            0.0 if args.overfit_sanity else args.label_smoothing,
         )
         if metrics["exact"] > best_exact:
             best_exact = metrics["exact"]
             save_checkpoint(
                 run_paths.checkpoint_dir / "best.pt",
                 model,
+                eval_model,
+                ema,
                 optimizer,
                 scheduler,
                 epoch,
@@ -372,6 +447,12 @@ def run_training(args: argparse.Namespace) -> None:
                 args.model_size,
                 args.fold,
                 args.n_folds,
+                args.lr,
+                use_ema,
+                args.ema_decay,
+                args.warmup_epochs,
+                args.grad_clip,
+                0.0 if args.overfit_sanity else args.label_smoothing,
             )
         if args.overfit_sanity and train_loss < 0.01 and metrics["exact"] == 1.0:
             print("overfit sanity passed")
@@ -390,6 +471,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--red-char-weight", type=float, default=1.0)
+    parser.add_argument("--lr", type=float, default=config.LR)
+    parser.add_argument("--warmup-epochs", type=int, default=config.WARMUP_EPOCHS)
+    parser.add_argument("--grad-clip", type=float, default=config.GRAD_CLIP_NORM)
+    parser.add_argument("--label-smoothing", type=float, default=config.LABEL_SMOOTHING)
+    parser.add_argument("--ema", action=argparse.BooleanOptionalAction, default=config.USE_EMA)
+    parser.add_argument("--ema-decay", type=float, default=config.EMA_DECAY)
     parser.add_argument("--model-size", choices=list(config.MODEL_SIZES), default="base")
     parser.add_argument("--augment-preset", choices=list(config.AUGMENT_PRESETS), default="light")
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)

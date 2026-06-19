@@ -28,6 +28,7 @@ def compute_loss(
     color_targets: torch.Tensor,
     color_weight: float = config.COLOR_LOSS_WEIGHT,
     red_char_weight: float = 1.0,
+    label_smoothing: float = config.LABEL_SMOOTHING,
 ) -> torch.Tensor:
     if red_char_weight <= 0:
         raise ValueError("red_char_weight must be positive")
@@ -35,6 +36,7 @@ def compute_loss(
         char_logits.reshape(-1, config.NUM_CHARS),
         char_targets.reshape(-1),
         reduction="none",
+        label_smoothing=label_smoothing,
     ).view_as(char_targets)
     if red_char_weight == 1.0:
         char_loss = char_losses.mean()

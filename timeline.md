@@ -1791,3 +1791,121 @@ OOF fold0 正式训练结果（2026-06-19 续）：
   - 停止继续训练 `oof_v2hi_f0_seed71`；不生成 submission，不提交 Kaggle。
   - `oof_predict.py` / `tune_oof.py` 暂不运行，因为目前只有一个质量不足的 fold，无法形成有效全量 OOF 判断。
   - 下一步如继续，应优先参考高分分支的主力路线：伪标签 v2hi 与红度+红线 glyph reranker，而不是继续在当前单 fold 主模型上延长训练。
+
+v2hi medium 增强新 seed 启动（2026-06-19 续）：
+
+- 背景：
+  - `local_v2hi_seed61` light best：`0.9852`
+  - `local_v2hi_seed62` light best：`0.9836`
+  - OOF fold0 主模型不足以继续，但 `medium` 增强尚未对 v2hi 主模型正式训练过。
+  - `medium` 保持颜色安全，只提高几何扰动和噪声强度，目标是测试是否比 light 更能适配 Kaggle 分布偏移。
+- 训练目标：
+  - run：`local_v2hi_medium_seed72`
+  - 命令：
+    - `python -u train.py --epochs 40 --augment --seed 72 --run-name local_v2hi_medium_seed72 --red-char-weight 2.5 --model-size v2hi --augment-preset medium --num-workers 0 --cache-in-ram`
+- 提交策略：
+  - 先看单模型 holdout 是否达到或超过 `local_v2hi_seed61`。
+  - 若单模型弱于现有 v2hi，不进入 submission；若有收益，再纳入当前四主模型 + glyph reranker 做本地搜索。
+
+v2hi medium 增强止损与 light 新 seed 启动（2026-06-19 续）：
+
+- `local_v2hi_medium_seed72` 训练结果：
+  - 已记录到 epoch 16。
+  - 当前最好：epoch 15，exact `0.9660`，char_acc `0.97880`，color_acc `0.99888`。
+  - 对照：`local_v2hi_seed61` light 在 epoch 17 已达到 exact `0.9756`，最终 best `0.9852`。
+- 决策：
+  - medium 增强在 v2hi 上明显慢于 light，且还未达到第二阶段单模型门槛 `0.975`。
+  - 停止继续训练 `local_v2hi_medium_seed72`；不生成 submission，不提交 Kaggle。
+- 下一步：
+  - 参考高分分支“多 v2hi 主模型”路线，但只使用本分支本地训练 checkpoint。
+  - 启动第三个 light v2hi seed：`local_v2hi_seed73`。
+  - 命令：
+    - `python -u train.py --epochs 40 --augment --seed 73 --run-name local_v2hi_seed73 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram`
+  - 若单模型达到 `0.983+`，再纳入当前主模型 + glyph reranker 做本地搜索；否则止损。
+
+v2hi light seed73 止损与 EMA 训练配方补齐（2026-06-19 续）：
+
+- `local_v2hi_seed73` 训练结果：
+  - 已记录到 epoch 16。
+  - 当前最好：epoch 16，exact `0.9636`，char_acc `0.97640`，color_acc `0.99888`。
+  - 对照：`local_v2hi_seed61` light 在 epoch 17 已达到 exact `0.9756`。
+- 决策：
+  - seed73 明显弱于已有 v2hi light 强 seed，继续跑满 40 epoch 的机会成本不划算。
+  - 停止继续训练 `local_v2hi_seed73`；不生成 submission，不提交 Kaggle。
+- 参考分支差异：
+  - 只读参考 `origin/feature/glyph-reranker-98.72` 后确认：当前主线已具备 `v2hi` 结构，主要缺口不在模型结构，而在训练 recipe。
+  - 主线补齐 EMA、label smoothing、warmup scheduler、grad clip 与对应 CLI 参数。
+  - checkpoint 兼容策略：`best.pt` 在启用 EMA 时将 EMA 权重写入 `state_dict` 供预测直接读取，同时保留 `raw_state_dict` / `ema_state_dict` 供续训和审计。
+- 验证：
+  - 新增 `red_char/test_training_recipe.py`。
+  - RED：修改前 `python -m unittest test_training_recipe` 出现 3 个预期失败，覆盖 label smoothing、scheduler、EMA 缺失。
+  - GREEN：修改后 `python -m unittest test_training_recipe`：`3 OK`。
+  - 回归：`python -m unittest test_training_recipe test_ensemble test_kfold test_oof_tools test_pseudo_training`：`41 OK`。
+  - smoke：`python -u train.py --epochs 1 --steps-per-epoch 1 --augment --seed 91 --run-name smoke_ema_recipe --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram --lr 0.0015 --warmup-epochs 0 --label-smoothing 0.05 --ema --grad-clip 5.0` 成功产出日志和 checkpoint，仅用于入口验证，不作为模型质量判断。
+- 下一步：
+  - 启动一条真实 EMA recipe v2hi light holdout 训练：`local_v2hi_ema_seed74`。
+  - 命令：
+    - `python -u train.py --epochs 40 --augment --seed 74 --run-name local_v2hi_ema_seed74 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram --lr 0.0015 --warmup-epochs 2 --label-smoothing 0.05 --ema --grad-clip 5.0`
+  - 若 holdout 不超过现有强 seed，不生成 submission；若有明显收益，再进入本地 ensemble / glyph rerank 搜索。
+
+EMA seed74 第一段诊断与重启策略（2026-06-19 续）：
+
+- `local_v2hi_ema_seed74` 第一段结果：
+  - 训练命令同上，`ema_decay=0.999`。
+  - 记录到 epoch 8。
+  - 日志 best EMA exact 仅 `0.0048`，epoch 8 EMA exact `0.0000`。
+- 诊断：
+  - 直接评估 `last.pt` 的 `raw_state_dict`：val_loss `0.16556`，exact `0.9348`，char_acc `0.96808`，color_acc `0.99512`。
+  - 同一 checkpoint 的 `ema_state_dict`：val_loss `4.86784`，exact `0.0000`。
+  - 结论：模型本体在学习，问题是 `ema_decay=0.999` 对当前 40 epoch / 186 step-per-epoch 的本地训练节奏过慢，早期 EMA 权重严重滞后，不能作为止损曲线。
+- 决策：
+  - 停止继续 `local_v2hi_ema_seed74`；不生成 submission，不提交 Kaggle。
+  - 重新启动低 decay EMA：`local_v2hi_ema99_seed75`。
+  - 命令：
+    - `python -u train.py --epochs 40 --augment --seed 75 --run-name local_v2hi_ema99_seed75 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --cache-in-ram --lr 0.0015 --warmup-epochs 2 --label-smoothing 0.05 --ema --ema-decay 0.99 --grad-clip 5.0`
+  - 若 EMA 曲线在 epoch 16 前仍明显低于 seed61/62 同期，则停止；否则继续到 40 epoch。
+
+EMA seed75 训练、候选 submission 与 Kaggle 提交（2026-06-19 续）：
+
+- 训练结果：
+  - run：`local_v2hi_ema99_seed75`
+  - 采用 `lr=0.0015`、`warmup_epochs=2`、`label_smoothing=0.05`、`ema_decay=0.99`、`grad_clip=5.0`。
+  - 多次前台分段训练，当前完整记录到 epoch 32。
+  - 关键指标：
+    - epoch 16：exact `0.9824`
+    - epoch 22：exact `0.9848`
+    - epoch 28：exact `0.9852`
+    - epoch 29：exact `0.9860`
+    - epoch 31：best exact `0.9872`，char_acc `0.99024`，color_acc `0.99992`
+    - epoch 32：exact `0.9872`，char_acc `0.99000`，color_acc `1.00000`
+  - 对照：该单模型已超过此前 `local_v2hi_seed61` 的 holdout best `0.9852`。
+- 本地 reranker 搜索：
+  - 用 seed75 替换 seed62：
+    - primary：`local_v2hi_seed61 + local_v2hi_ema99_seed75 + local_wide_seed51_cache_50ep_20260618 + local_k5_seed52`
+    - char weights：`0.20 0.20 0.42 0.18`
+    - color weights：`0 0.34 0 0.66`
+    - glyph：`local_glyph_seed66_red_gap_noaug + local_glyph_seed67_all_gap_noaug`
+    - 最优：`2478/2500 = 0.99120`，`top_k=2/3, alpha=1.70`
+  - 加入 seed75 作为第五主模型：
+    - primary：`local_v2hi_seed61 + local_v2hi_seed62 + local_v2hi_ema99_seed75 + local_wide_seed51_cache_50ep_20260618 + local_k5_seed52`
+    - char weights：`0.17 0.13 0.20 0.34 0.16`
+    - color weights：`0 0.25 0.20 0 0.55`
+    - glyph：`local_glyph_seed66_red_gap_noaug + local_glyph_seed67_all_gap_noaug`
+    - 最优：`2478/2500 = 0.99120`，`top_k=2/3, alpha=1.05`
+  - 结论：seed75 提升了单模型，但在当前 holdout/reranker 组合上没有超过历史最高 `2478/2500`。
+- submission 生成：
+  - 选择第五主模型组合生成候选，原因是纳入更强 seed75 且保持历史最高本地 exact。
+  - 命令：
+    - `python predict_reranker.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_v2hi_ema99_seed75/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --glyph-checkpoints outputs/runs/local_glyph_seed66_red_gap_noaug/checkpoints/best.pt outputs/runs/local_glyph_seed67_all_gap_noaug/checkpoints/best.pt --char-weights 0.17 0.13 0.20 0.34 0.16 --color-weights 0 0.25 0.20 0 0.55 --top-k 2 --alpha 1.05 --output ..\submissions\submission_local_stage2_ema99s75_g66_g67_rerank_alpha105.csv`
+  - 输出：`submissions/submission_local_stage2_ema99s75_g66_g67_rerank_alpha105.csv`
+  - 根目录提交副本：`submission.csv`
+  - 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- Kaggle 提交：
+  - 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 ema99s75 g66 g67 rerank alpha105"`
+  - ref：`53848834`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98320`
+- 决策：
+  - 本次提交持平本分支自有最好 `0.98320`，未突破。
+  - 训练 recipe（EMA99 + label smoothing + warmup + grad clip）是有效的单模型提升，但当前 public 瓶颈仍在测试分布/决策策略，而不是单一 holdout exact。
+  - 后续不建议继续单纯堆同类 v2hi seed；应优先做 OOF 级别的主模型权重/颜色阈值/局部 rerank 选择，或扩展与高分参考路线一致的专项模型。
