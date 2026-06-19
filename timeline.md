@@ -1519,3 +1519,111 @@ Kaggle 提交尝试：
 - 不生成 submission，不消耗 Kaggle 额度。
 - 保留 `--x-tta` 作为可复现实验开关，但后续默认不启用。
 - 下一步优先转向测试分布适配/伪标签，而不是继续在单一 val 上做小幅 rerank 调参。
+
+### 伪标签测试分布适配入口（2026-06-19）
+
+目标：
+
+- 不把他人的 `submission_sample.csv -> 0.98520` 计入本分支成果。
+- 参考其他分支思路只作为代码/方法参考，本分支继续以自有 Kaggle public 为准。
+- 新增本地伪标签训练入口，用当前四个自有 teacher checkpoint 给 test 集生成高置信伪标签，再训练 pseudo student，检查是否能提升 ensemble/reranker 泛化。
+
+源码改动：
+
+- 新增 `train_pseudo.py`：
+  - `select_confident_pseudo_samples(...)`：仅保留 5 个字符位和 5 个颜色位都超过阈值的 test 样本。
+  - `generate_pseudo_labels(...)`：复用当前 teacher ensemble 和 char/color 权重生成伪标签。
+  - `run_training(...)`：将真训练集 train split 与 test 伪标签集拼接训练，验证仍只看原始 val split。
+  - 支持 `--resume`，中断后可从 `last.pt` 恢复 optimizer/scheduler/epoch。
+- 新增 `test_pseudo_training.py`：
+  - 覆盖高置信筛选逻辑。
+  - 覆盖伪标签训练 CLI 参数，包括 `--resume`。
+
+验证：
+
+- `python -m unittest test_pseudo_training`
+- 结果：`2 OK`
+- `python -m unittest discover -p "test*.py"`
+- 结果：`48 OK`
+
+伪标签保留量预检：
+
+- teacher checkpoints：
+  - `local_v2hi_seed61`
+  - `local_v2hi_seed62`
+  - `local_wide_seed51_cache_50ep_20260618`
+  - `local_k5_seed52`
+- char weights：`0.20 | 0.20 | 0.42 | 0.18`
+- color weights：`0 | 0.34 | 0 | 0.66`
+- 阈值扫描：
+  - `char=0.92, color=0.90`：`4644/5000`
+  - `char=0.90, color=0.90`：`4676/5000`
+  - `char=0.88, color=0.88`：`4699/5000`
+  - `char=0.85, color=0.85`：`4729/5000`
+
+当前动作：
+
+- 采用较保守的 `char_threshold=0.92, color_threshold=0.90` 启动 `local_pseudo_v2hi_seed70`。
+- 若本地验证不能超过当前有效 ensemble/rerank，先不提交 Kaggle。
+
+首轮训练修正：
+
+- 从零训练 `local_pseudo_v2hi_seed70` 完成 1 epoch：
+  - `pseudo_count=4645`
+  - `val exact=0.0220`
+  - 结论：scratch pseudo student 收敛太慢，不适合作为当前冲榜主线。
+- `train_pseudo.py` 追加：
+  - `--init-checkpoint`：只加载已有模型权重，用于从自有 teacher 微调。
+  - `--lr`：支持伪标签微调使用更小学习率。
+- 复测：
+  - `python -m unittest test_pseudo_training`：`2 OK`
+  - `python -m unittest discover -p "test*.py"`：`48 OK`
+- 下一步改为从 `local_v2hi_seed61/checkpoints/best.pt` 初始化，低学习率微调。
+
+伪标签微调与提交结果：
+
+- 训练：`local_pseudo_v2hi_seed70_init61`
+  - 初始化：`outputs/runs/local_v2hi_seed61/checkpoints/best.pt`
+  - 学习率：`0.0002`
+  - 阈值：`char=0.92, color=0.90`
+  - 伪标签：`4645/5000`
+  - 3 epoch best：`epoch=2, val exact=0.9836`
+  - 结论：单模型低于原 `local_v2hi_seed61`，只能作为 ensemble 多样性候选。
+- 本地 reranker：
+  - 主模型：原四模型 + `local_pseudo_v2hi_seed70_init61/best.pt`
+  - pseudo 低权重：char `0.05`，color `0.05`
+  - char weights：`0.19 | 0.19 | 0.399 | 0.171 | 0.05`
+  - color weights：`0 | 0.323 | 0 | 0.627 | 0.05`
+  - glyph：`glyph66 + glyph67all`
+  - best：`top_k=2, alpha=1.40, exact=2478/2500=0.99120`
+  - 其他扫描：
+    - pseudo `0.10/0.15/0.20`：均为 `2478/2500`
+    - `glyph67all + glyph68redline`：`2478/2500`
+    - `glyph66 + glyph67all + glyph68redline`：`2477/2500`
+- 生成 submission：
+  - `submissions/submission_local_stage2_pseudo5_g66_g67_rerank_alpha140.csv`
+  - 根目录 `submission.csv` 已复制为该版本。
+- Kaggle 提交：
+  - 命令：`kaggle competitions submit -c verification-red-code -f submission.csv -m "local stage2 pseudo5 g66 g67 rerank alpha140"`
+  - 实际 CLI：`.kaggle_venv/Scripts/kaggle.exe`
+  - ref：`53825047`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98280`
+- 结论：
+  - 伪标签低权重虽然本地达到 `2478`，public 未超过本分支自有最好 `0.98320`。
+  - 当前自有最好仍是 `53823004` / `53823111` 的 `0.98320`。
+  - 伪标签训练入口保留为可复现实验，但当前不继续围绕 pseudo 权重消耗提交额度。
+
+参考其他分支代码（不计入本分支成绩）：
+
+- 参考分支：`origin/feature/glyph-reranker-98.72`
+- 用户已说明该分支及 `0.98520` 相关成绩不是本分支成果；本轮只读参考，不合并、不复用其 submission。
+- 观察到的可参考方向：
+  - 高分路线依赖更多主模型、OOF/K-fold、选择性 glyph rerank、red-threshold、pair/glyph 专项脚本。
+  - 该分支会删除/重写本分支 timeline 与 submissions，不适合直接 merge。
+  - 其交接文档也强调 2500 val 在高分段噪声很大，后续应优先 OOF/更大验证，而不是继续凭末位样本反复提交。
+- 本轮尝试：
+  - 对当前自有四主模型 + `glyph66/glyph67all` 做 selective margin rerank 网格扫描。
+  - 该只读扫描 5 分钟未完成，被工具超时终止；无结果，不作为提交依据。
+- 后续建议：
+  - 若继续第二阶段，应把下一步重点从单 split val 调参转到 OOF/K-fold 评估或全量真标签训练候选，而不是继续提交 `2478` 附近的同分变体。
