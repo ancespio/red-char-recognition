@@ -1738,3 +1738,30 @@ deep3 正式训练尝试：
 - 下一步建议：
   - 若继续训练，应优先训练少量 OOF fold 模型做评估链路 smoke，而不是直接生成 Kaggle submission。
   - 只有 OOF 或更大验证信号显示稳定提升时，再生成新 submission 并提交。
+
+OOF 概率汇总与阈值调参工具补齐（2026-06-19 续）：
+
+- 新增工具：
+  - `red_char/oof_predict.py`
+    - 使用 `--primary-patterns` / `--glyph-patterns` 中的 `{fold}` 占位符加载每折 checkpoint。
+    - 按 `red_char/kfold.py` 的固定 fold split 汇总全量 OOF 概率。
+    - 输出 `primary_char`、`color`、可选 `glyph`、真值 target 与 pattern 元信息到 `outputs/oof/oof.pt`。
+  - `red_char/tune_oof.py`
+    - 在 OOF 概率上扫描 red threshold。
+    - 若存在 glyph 概率，扫描 selective rerank 的 `primary_margin_max` / `glyph_margin_min`。
+    - 输出 vectorized exact 与 string-verified exact，避免继续只用 2500 val 末位样本调参。
+- 新增测试：
+  - `red_char/test_oof_tools.py`
+  - 覆盖 fold checkpoint pattern 展开、OOF parser 参数、exact 统计、selective rerank 阈值选择。
+- 验证：
+  - `python -m unittest test_oof_tools.py`：`4 OK`
+  - `python -m unittest discover -p "test*.py"`：`55 OK`
+  - `python oof_predict.py --help`：CLI 正常
+  - `python tune_oof.py --help`：CLI 正常
+- fold 训练入口 smoke：
+  - 命令：`python -u train.py --epochs 1 --steps-per-epoch 1 --augment --seed 71 --run-name oof_v2hi_fold0_smoke --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --no-cache-in-ram --fold 0 --n-folds 5`
+  - 结果：成功进入训练，并在 fold 0 的 `10000` 张验证集上完成验证。
+  - 输出：epoch 1 exact `0.0000`，仅用于入口 smoke，不作为模型质量判断。
+- 决策：
+  - 当前仍未生成新 submission，也未提交 Kaggle。
+  - 下一步可以开始正式训练 `oof_v2hi_f0_seed71`，先跑单 fold 建立 OOF 链路样板；等至少 5 折或足够 OOF 覆盖后再运行 `oof_predict.py` / `tune_oof.py`。
