@@ -1765,3 +1765,29 @@ OOF 概率汇总与阈值调参工具补齐（2026-06-19 续）：
 - 决策：
   - 当前仍未生成新 submission，也未提交 Kaggle。
   - 下一步可以开始正式训练 `oof_v2hi_f0_seed71`，先跑单 fold 建立 OOF 链路样板；等至少 5 折或足够 OOF 覆盖后再运行 `oof_predict.py` / `tune_oof.py`。
+
+OOF fold0 正式训练结果（2026-06-19 续）：
+
+- 参考边界：
+  - `origin/feature/glyph-reranker-98.72` 仅作只读方法参考。
+  - 该分支及 `0.98520` / 更高平台成绩均不计入本分支成果。
+  - 本分支当前自有 Kaggle 最好仍为 `0.98320`。
+- 训练目标：
+  - run：`oof_v2hi_f0_seed71`
+  - 命令：
+    - `python -u train.py --epochs 40 --augment --seed 71 --run-name oof_v2hi_f0_seed71 --red-char-weight 2.5 --model-size v2hi --augment-preset light --num-workers 0 --no-cache-in-ram --fold 0 --n-folds 5`
+  - 续训：
+    - 多次使用 `--resume outputs/runs/oof_v2hi_f0_seed71/checkpoints/last.pt` 前台分段续跑。
+    - 最终记录到 epoch 32。
+- 关键指标：
+  - epoch 18：best `0.9523`
+  - epoch 22：exact `0.9669`
+  - epoch 28：exact `0.9702`
+  - epoch 30：best `0.9718`，char_acc `0.98364`，color_acc `0.99954`，joint_pos_acc `0.98322`
+  - epoch 31：exact `0.9711`
+  - epoch 32：exact `0.9714`
+- 决策：
+  - 该 fold0 单模型在 10,000 张 OOF 验证集上低于继续投入门槛 `0.975`，且 epoch 30 后趋于平台。
+  - 停止继续训练 `oof_v2hi_f0_seed71`；不生成 submission，不提交 Kaggle。
+  - `oof_predict.py` / `tune_oof.py` 暂不运行，因为目前只有一个质量不足的 fold，无法形成有效全量 OOF 判断。
+  - 下一步如继续，应优先参考高分分支的主力路线：伪标签 v2hi 与红度+红线 glyph reranker，而不是继续在当前单 fold 主模型上延长训练。
