@@ -71,6 +71,7 @@ def main() -> None:
     parser.add_argument("--use-glyph-ema", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--top-k", type=int, nargs="+", default=[2, 3, 5])
     parser.add_argument("--x-tta", action="store_true", help="average original and +/-4px horizontal shifts")
+    parser.add_argument("--conf-beta", type=float, default=0.0, help="confidence-weighted ensemble exponent (0=uniform)")
     args = parser.parse_args()
 
     device = torch.device(config.DEVICE)
@@ -118,11 +119,15 @@ def main() -> None:
                 char_logits, color_logits = model(shifted)
                 current_char = F.softmax(char_logits, dim=-1)
                 current_color = F.softmax(color_logits, dim=-1)
+                if getattr(args, "conf_beta", 0.0) > 0:
+                    current_char = current_char * current_char.amax(-1, keepdim=True) ** args.conf_beta
+                    current_color = current_color * current_color.amax(-1, keepdim=True) ** args.conf_beta
                 primary = current_char if primary is None else primary + current_char
                 color = current_color if color is None else color + current_color
-        divisor = len(primary_models) * len(shifts)
-        primary_probs.append((primary / divisor).cpu())
-        color_probs.append((color / divisor).cpu())
+        primary = primary / primary.sum(-1, keepdim=True)
+        color = color / color.sum(-1, keepdim=True)
+        primary_probs.append(primary.cpu())
+        color_probs.append(color.cpu())
         expert_prob = torch.stack(
             [glyph_probabilities([model], images) for model in glyph_models], dim=0
         )

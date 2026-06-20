@@ -46,6 +46,8 @@ class GlyphDataset(Dataset):
         red_only: bool = True,
         augment: bool = False,
         red_line_p: float = 0.0,
+        cutout_p: float = 0.0,
+        faint_p: float = 0.0,
         crop_width: int = GLYPH_CROP_WIDTH,
         boost_chars: str = "",
         boost_factor: int = 1,
@@ -66,7 +68,7 @@ class GlyphDataset(Dataset):
                         self.items.append((image_idx, position))
         self.transform = (
             TrainAugment(translate=0.08, scale=(0.94, 1.06), degrees=5.0, noise_std=0.015,
-                         red_line_p=red_line_p)
+                         red_line_p=red_line_p, cutout_p=cutout_p, faint_p=faint_p)
             if augment
             else None
         )
@@ -96,7 +98,7 @@ class GlyphNet(nn.Module):
                  hires: bool = False, crop_width: int = GLYPH_CROP_WIDTH,
                  head_mode: str = "flat") -> None:
         super().__init__()
-        if input_mode not in {"rgb", "red"}:
+        if input_mode not in {"rgb", "red", "red2"}:
             raise ValueError(f"unknown glyph input mode: {input_mode}")
         if head_mode not in {"flat", "gap"}:
             raise ValueError(f"unknown head_mode: {head_mode}")
@@ -107,7 +109,7 @@ class GlyphNet(nn.Module):
         widths = (48, 96, 192, 256)
         pools = (True, False, False, False) if hires else (True, True, False, False)
         stages = []
-        base_in = 5 if input_mode == "red" else 3
+        base_in = 5 if input_mode in {"red", "red2"} else 3
         in_channels = base_in
         for out_channels, pool in zip(widths, pools):
             stages.append(ResidualSEStage(in_channels, out_channels, pool=pool))
@@ -145,9 +147,16 @@ class GlyphNet(nn.Module):
             )
 
     def features(self, x: torch.Tensor) -> torch.Tensor:
-        if self.input_mode == "red":
+        if self.input_mode in {"red", "red2"}:
             red = x[:, 0:1]
             redness = (red - x[:, 1:3].amax(dim=1, keepdim=True)).relu()
+            if self.input_mode == "red2":
+                # intensity-robust: normalise redness per-crop by its own max so
+                # FAINT red strokes (e.g. the light right stroke of a V) stay
+                # visible relative to the strongest red, instead of being
+                # suppressed by the absolute-difference redness (fixes V->I).
+                m = redness.amax(dim=(2, 3), keepdim=True)
+                redness = redness / (m + 1e-4)
             darkness = 1.0 - x.mean(dim=1, keepdim=True)
             x = torch.cat([x, redness, darkness], dim=1)
         return self.head[:-1](self.reduce(self.backbone(x)))

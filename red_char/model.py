@@ -284,6 +284,44 @@ class RedCharNetV2Hi(nn.Module):
         return char_logits, color_logits
 
 
+# =============================================================================
+# Front filter: a small, end-to-END jointly-trained denoise + spatial-attention
+# module prepended to the recogniser. Trained ONLY by the recognition loss on
+# REAL labels (no synthetic, no reconstruction target), so it learns to suppress
+# whatever interference (colour lines, faint clutter) hurts recognition — which
+# is exactly why our separately-trained synthetic line-removal U-Net failed
+# (domain gap). Dilated convs give a wide receptive field so it can tell a
+# full-span line from a character stroke. Output is a refined 3-channel image.
+# =============================================================================
+class FrontFilter(nn.Module):
+    def __init__(self, hidden: int = 16) -> None:
+        super().__init__()
+        self.body = nn.Sequential(
+            nn.Conv2d(3, hidden, 3, padding=1, bias=False), nn.BatchNorm2d(hidden), nn.ReLU(inplace=True),
+            nn.Conv2d(hidden, hidden, 3, padding=2, dilation=2, bias=False), nn.BatchNorm2d(hidden), nn.ReLU(inplace=True),
+            nn.Conv2d(hidden, hidden, 3, padding=4, dilation=4, bias=False), nn.BatchNorm2d(hidden), nn.ReLU(inplace=True),
+        )
+        self.delta = nn.Conv2d(hidden, 3, 3, padding=1)   # residual cleanup
+        self.attn = nn.Conv2d(hidden, 1, 3, padding=1)     # spatial gate (suppress interference)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.body(x)
+        refined = (x + self.delta(h)).clamp(0.0, 1.0)
+        mask = torch.sigmoid(self.attn(h))
+        # gate toward white background (1.0) where mask is low -> suppress interference
+        return refined * mask + (1.0 - mask)
+
+
+class RedCharNetV2HiFF(nn.Module):
+    def __init__(self, dropout: float = 0.3) -> None:
+        super().__init__()
+        self.front = FrontFilter()
+        self.net = RedCharNetV2Hi(dropout=dropout)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.net(self.front(x))
+
+
 def build_model(name: str | None = None, dropout: float = 0.3) -> nn.Module:
     name = (name or config.MODEL).lower()
     if name == "v1":
@@ -292,6 +330,8 @@ def build_model(name: str | None = None, dropout: float = 0.3) -> nn.Module:
         return RedCharNetV2(dropout=dropout)
     if name == "v2hi":
         return RedCharNetV2Hi(dropout=dropout)
+    if name == "v2hiff":
+        return RedCharNetV2HiFF(dropout=dropout)
     if name == "v2hi6":
         return RedCharNetV2Hi(dropout=dropout, in_channels=6)
     if name == "v3":

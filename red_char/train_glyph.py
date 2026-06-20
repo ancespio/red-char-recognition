@@ -97,7 +97,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1.5e-3)
     parser.add_argument("--tag", type=str, default="_g1")
     parser.add_argument("--confusion-loss", action="store_true")
-    parser.add_argument("--input-mode", choices=["rgb", "red"], default="rgb")
+    parser.add_argument("--input-mode", choices=["rgb", "red", "red2"], default="rgb")
     parser.add_argument("--hires", action="store_true",
                         help="keep 30x32 feature map (one less pool) for finer stroke detail")
     parser.add_argument("--head-mode", choices=["flat", "gap"], default="flat",
@@ -107,6 +107,10 @@ def main() -> None:
                              "validation stays red-only (the deployment metric)")
     parser.add_argument("--red-line-aug", type=float, default=0.0,
                         help="probability of overlaying synthetic RED lines (robustness to residual red lines)")
+    parser.add_argument("--cutout", type=float, default=0.0,
+                        help="probability of cutout occlusion (read partially-covered glyph)")
+    parser.add_argument("--faint-aug", type=float, default=0.0,
+                        help="prob of faint/uneven-red gradient fade (robustness to light strokes, fixes V->I)")
     parser.add_argument("--crop-width", type=int, default=64,
                         help="glyph crop width; wider gives context to tell lines (span beyond glyph) from strokes")
     parser.add_argument("--boost-chars", type=str, default="",
@@ -114,6 +118,7 @@ def main() -> None:
     parser.add_argument("--boost-factor", type=int, default=1, help="oversample multiplier for --boost-chars")
     parser.add_argument("--fold", type=int, default=None, help="K-fold OOF: hold this fold out")
     parser.add_argument("--n-folds", type=int, default=5)
+    parser.add_argument("--full-data", action="store_true", help="near-full-data retrain (VAL_RATIO->0.01)")
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
@@ -121,13 +126,16 @@ def main() -> None:
     config.ensure_output_dirs()
     device = torch.device(config.DEVICE)
     base = build_train_dataset(cache_in_ram=args.cache_in_ram)
+    if args.full_data:
+        config.VAL_RATIO = 0.01
     if args.fold is not None:
         from kfold import fold_split
         train_indices, val_indices = fold_split(len(base), args.fold, args.n_folds)
     else:
-        train_indices, val_indices = deterministic_split_indices(len(base))
+        train_indices, val_indices = deterministic_split_indices(len(base), config.VAL_RATIO)
     train_ds = GlyphDataset(base, train_indices, red_only=not args.all_glyphs, augment=True,
-                            red_line_p=args.red_line_aug, crop_width=args.crop_width,
+                            red_line_p=args.red_line_aug, cutout_p=args.cutout, faint_p=args.faint_aug,
+                            crop_width=args.crop_width,
                             boost_chars=args.boost_chars, boost_factor=args.boost_factor)
     val_ds = GlyphDataset(base, val_indices, red_only=True, augment=False, crop_width=args.crop_width)
     train_loader = make_loader(train_ds, shuffle=True)

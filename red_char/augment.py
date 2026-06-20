@@ -9,6 +9,46 @@ import torchvision.transforms.v2.functional as F
 import config
 
 
+def _faint_fade(image: torch.Tensor) -> torch.Tensor:
+    """Fade the ink toward the white background along a random linear gradient.
+
+    Simulates a stroke whose colour is uneven / very light on one side (e.g. a V
+    whose right stroke is faint red), which otherwise gets dropped and turns the
+    glyph into a simpler shape (V->I). Teaches the model that a faint stroke is
+    still part of the character. Background (already white) is unchanged; only
+    ink darkens-> whitens proportionally to the gradient."""
+    _, h, w = image.shape
+    lo = float(torch.empty(1).uniform_(0.25, 0.6))   # strongest fade factor
+    ang = float(torch.empty(1).uniform_(0, 6.2832))
+    dx, dy = float(torch.cos(torch.tensor(ang))), float(torch.sin(torch.tensor(ang)))
+    xs = torch.linspace(0, 1, w).view(1, w)
+    ys = torch.linspace(0, 1, h).view(h, 1)
+    coord = (xs * dx + ys * dy)
+    coord = (coord - coord.min()) / (coord.max() - coord.min() + 1e-6)  # [0,1]
+    if random.random() < 0.5:
+        coord = 1 - coord
+    alpha = (lo + (1 - lo) * coord).unsqueeze(0)     # [1,h,w] in [lo,1]
+    # ink = 1-image; fade ink by alpha -> out = 1 - (1-image)*alpha
+    return (1 - (1 - image) * alpha).clamp_(0.0, 1.0)
+
+
+def _cutout(image: torch.Tensor, n: int) -> torch.Tensor:
+    """Erase n small rectangles (occlusion sim) so the model learns to read a
+    partially-covered glyph. Boxes are kept small (≤~35% of each side) so the
+    character is never fully destroyed; fill is random (white / grey / a colour)
+    to mimic background or an opaque distractor covering part of the stroke."""
+    _, h, w = image.shape
+    out = image.clone()
+    for _ in range(n):
+        bh = int(h * float(torch.empty(1).uniform_(0.12, 0.35)))
+        bw = int(w * float(torch.empty(1).uniform_(0.12, 0.35)))
+        y0 = int(torch.randint(0, max(1, h - bh), (1,)))
+        x0 = int(torch.randint(0, max(1, w - bw), (1,)))
+        fill = float(torch.empty(1).uniform_(0.0, 1.0))
+        out[:, y0:y0 + bh, x0:x0 + bw] = fill
+    return out
+
+
 def _draw_red_lines(image: torch.Tensor, n: int) -> torch.Tensor:
     """Overlay n random RED interference lines on a [3,H,W] image in [0,1].
 
@@ -56,8 +96,12 @@ class TrainAugment:
         fill: float = 1.0,
         heavy: bool | None = None,
         red_line_p: float = 0.0,
+        cutout_p: float = 0.0,
+        faint_p: float = 0.0,
     ) -> None:
         self.red_line_p = red_line_p
+        self.cutout_p = cutout_p
+        self.faint_p = faint_p
         self.heavy = config.AUG_HEAVY if heavy is None else heavy
         if self.heavy:
             self.translate = config.AUG_H_TRANSLATE if translate is None else translate
@@ -110,7 +154,13 @@ class TrainAugment:
             image = F.gaussian_blur(image, kernel_size=5, sigma=sigma)
 
         if self.red_line_p > 0 and float(torch.rand(1)) < self.red_line_p:
-            image = _draw_red_lines(image, n=random.randint(1, 3))
+            image = _draw_red_lines(image, n=random.randint(1, 5))  # heavier line occlusion
+
+        if self.cutout_p > 0 and float(torch.rand(1)) < self.cutout_p:
+            image = _cutout(image, n=random.randint(1, 2))
+
+        if self.faint_p > 0 and float(torch.rand(1)) < self.faint_p:
+            image = _faint_fade(image)
 
         if self.noise_std > 0:
             image = image + torch.randn_like(image) * self.noise_std

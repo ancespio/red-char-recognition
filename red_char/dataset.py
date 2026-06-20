@@ -169,6 +169,27 @@ class _AugmentedSubset(Dataset):
         return self.transform(image), char_target, color_target
 
 
+class SynthDataset(Dataset):
+    """On-the-fly procedural synthetic captchas (labels exact by construction).
+
+    Mixed into recognition training to add controlled coverage of hard
+    confusions / occlusions. Style is matched to the real captcha in synth.py.
+    """
+
+    def __init__(self, length: int) -> None:
+        self.length = length
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, index: int):
+        import synth
+        img, chars, colors = synth.make_labeled()
+        return (torch.from_numpy(img),
+                torch.tensor(chars, dtype=torch.long),
+                torch.tensor(colors, dtype=torch.long))
+
+
 def build_split_datasets(
     cache_in_ram: bool = config.CACHE_IN_RAM,
     augment: bool = config.USE_AUGMENT,
@@ -181,7 +202,7 @@ def build_split_datasets(
     filename hashes recorded in checkpoints stay comparable across runs.
     """
     base = build_train_dataset(cache_in_ram=cache_in_ram, denoised_dir=denoised_dir)
-    train_indices, val_indices = deterministic_split_indices(len(base))
+    train_indices, val_indices = deterministic_split_indices(len(base), config.VAL_RATIO)
     train_names = [base.samples[idx].filename for idx in train_indices]
     val_names = [base.samples[idx].filename for idx in val_indices]
     if augment:
