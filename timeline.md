@@ -2244,3 +2244,34 @@ ghl seed79 第四段训练记录（2026-06-20 续）：
 - 决策：
   - 当前 seed79 尚未达到现有 `g77/g78` 水平，不生成 submission，不提交 Kaggle。
   - 代码层迁移已完成且测试通过；训练可从 `outputs/runs/local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100/checkpoints/last.pt` 继续。
+
+ghl seed79 跑满 100 epoch 与首轮提交（2026-06-20 续）：
+
+- 按用户要求继续执行 PR #3 描述的 `100 epoch` 长训，不在 38 epoch 阶段止损。
+- run：`local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100`
+- 继续训练结果：
+  - epoch 70：val_acc `0.99695`
+  - epoch 79：val_acc `0.99711`
+  - epoch 87：当前 best `0.99727`
+  - epoch 90：val_acc `0.99711`
+  - epoch 100：val_acc `0.99679`
+  - best checkpoint：`red_char/outputs/runs/local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100/checkpoints/best.pt`
+- reranker 本地搜索：
+  - `g79` alone top3：`2481/2500 = 0.99240`
+  - `g78+g79` top3：`2483/2500 = 0.99320`
+  - `g77+g79` top3：`2482/2500 = 0.99280`
+  - `g77+g78+g79` alpha top3：`2484/2500 = 0.99360`
+  - `g77+g78+g79` selective top3, `primary_margin_max=1.00`, `glyph_margin_min=0.20`, `red_threshold=0.20`：`2486/2500 = 0.99440`
+- 生成 submission：
+  - 输出：`submissions/submission_local_stage2_ema99s75_g77_g78_g79_selective_pm100_gm020_red020.csv`
+  - 根目录 `submission.csv` 已同步为该版本。
+  - CSV 验证：`5000` 行，空标签 `0`，重复 id `0`，bad id `0`。
+  - 长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+- Kaggle 提交：
+  - message：`local stage2 ema99s75 g77 g78 g79 selective pm100 gm020 red020`
+  - ref：`53892677`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98780`
+- 结论：
+  - seed79 跑满 100 epoch 后确实带来泛化提升，刷新本分支自有最好 public，从 `0.98640` 提升到 `0.98780`。
+  - 仍未达到 `0.99000`；下一步应继续向 PR #3 的 `phl` 100epoch 主模型路线迁移，而不是只微调当前 glyph 组合。
