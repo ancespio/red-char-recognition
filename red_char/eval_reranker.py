@@ -42,6 +42,28 @@ def selective_rerank(
     return torch.where(override, glyph_winner, primary_winner)
 
 
+def expert_selective_rerank(
+    primary_prob: torch.Tensor,
+    expert_glyph_prob: torch.Tensor,
+    top_k: int,
+    primary_margin_max: float,
+    glyph_margin_min: float,
+) -> torch.Tensor:
+    primary_value, candidate_idx = primary_prob.topk(top_k, dim=-1)
+    expanded_idx = candidate_idx.unsqueeze(0).expand(expert_glyph_prob.shape[0], -1, -1, -1)
+    candidate_glyph = expert_glyph_prob.gather(-1, expanded_idx)
+    glyph_value, glyph_order = candidate_glyph.topk(2, dim=-1)
+    expert_margin = glyph_value[..., 0] - glyph_value[..., 1]
+    best_expert = expert_margin.argmax(dim=0, keepdim=True)
+    best_order = glyph_order[..., 0].gather(0, best_expert).squeeze(0)
+    glyph_winner = candidate_idx.gather(-1, best_order.unsqueeze(-1)).squeeze(-1)
+    glyph_margin = expert_margin.gather(0, best_expert).squeeze(0)
+    primary_winner = candidate_idx[..., 0]
+    primary_margin = primary_value[..., 0] - primary_value[..., 1]
+    override = (primary_margin <= primary_margin_max) & (glyph_margin >= glyph_margin_min)
+    return torch.where(override, glyph_winner, primary_winner)
+
+
 @torch.no_grad()
 def average_primary_logits(
     primary_models: list[torch.nn.Module],

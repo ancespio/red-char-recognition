@@ -132,6 +132,8 @@ class TrainAugmentation:
         erase_scale: tuple[float, float] | None = None,
         erase_prob: float = 0.25,
         red_line_p: float = 0.0,
+        faint_p: float = 0.0,
+        cutout_p: float = 0.0,
     ) -> None:
         self.affine = RandomAffine(
             degrees=degrees,
@@ -143,6 +145,8 @@ class TrainAugmentation:
         self.erase_scale = erase_scale
         self.erase_prob = erase_prob
         self.red_line_p = red_line_p
+        self.faint_p = faint_p
+        self.cutout_p = cutout_p
 
     @classmethod
     def from_preset(cls, preset: str) -> "TrainAugmentation":
@@ -155,7 +159,11 @@ class TrainAugmentation:
     def __call__(self, image: torch.Tensor) -> torch.Tensor:
         augmented = self.affine(image)
         if self.red_line_p > 0 and torch.rand(()) < self.red_line_p:
-            augmented = self._draw_red_lines(augmented, n=int(torch.randint(1, 4, ()).item()))
+            augmented = self._draw_red_lines(augmented, n=int(torch.randint(1, 6, ()).item()))
+        if self.faint_p > 0 and torch.rand(()) < self.faint_p:
+            augmented = self._faint_fade(augmented)
+        if self.cutout_p > 0 and torch.rand(()) < self.cutout_p:
+            augmented = self._cutout(augmented, n=int(torch.randint(1, 3, ()).item()))
         if self.noise_std > 0:
             augmented = augmented + torch.randn_like(augmented) * self.noise_std
         augmented = augmented.clamp_(0.0, 1.0)
@@ -189,6 +197,36 @@ class TrainAugmentation:
                 ]
             ).view(3, 1, 1)
             out = out * (1.0 - mask) + color * mask
+        return out
+
+    def _faint_fade(self, image: torch.Tensor) -> torch.Tensor:
+        _, height, width = image.shape
+        dtype = image.dtype
+        device = image.device
+        low = torch.empty((), dtype=dtype, device=device).uniform_(0.25, 0.60)
+        angle = torch.empty((), dtype=dtype, device=device).uniform_(0, 2 * torch.pi)
+        dx = torch.cos(angle)
+        dy = torch.sin(angle)
+        yy = torch.linspace(0, 1, height, dtype=dtype, device=device).view(height, 1)
+        xx = torch.linspace(0, 1, width, dtype=dtype, device=device).view(1, width)
+        coord = xx * dx + yy * dy
+        coord = (coord - coord.min()) / (coord.max() - coord.min() + 1e-6)
+        if torch.rand((), device=device) < 0.5:
+            coord = 1.0 - coord
+        alpha = (low + (1.0 - low) * coord).unsqueeze(0)
+        return (1.0 - (1.0 - image) * alpha).clamp_(0.0, 1.0)
+
+    def _cutout(self, image: torch.Tensor, n: int) -> torch.Tensor:
+        channels, height, width = image.shape
+        del channels
+        out = image.clone()
+        for _ in range(n):
+            erase_h = max(1, int(height * float(torch.empty(()).uniform_(0.12, 0.35))))
+            erase_w = max(1, int(width * float(torch.empty(()).uniform_(0.12, 0.35))))
+            top = int(torch.randint(0, height - erase_h + 1, ()).item())
+            left = int(torch.randint(0, width - erase_w + 1, ()).item())
+            fill = float(torch.empty(()).uniform_(0.0, 1.0))
+            out[:, top : top + erase_h, left : left + erase_w] = fill
         return out
 
     def _erase(self, image: torch.Tensor) -> torch.Tensor:

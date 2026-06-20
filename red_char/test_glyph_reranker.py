@@ -42,6 +42,20 @@ class GlyphRerankerTests(unittest.TestCase):
         self.assertEqual(logits.shape, (4, config.NUM_CHARS))
         self.assertGreater(count_parameters(model), 100_000)
 
+    def test_glyph_red2_normalizes_faint_redness_per_crop(self) -> None:
+        from glyph import GlyphNet
+
+        image = torch.ones(1, 3, config.IMAGE_HEIGHT, 64)
+        image[:, 0, 10, 10] = 0.60
+        image[:, 1, 10, 10] = 0.55
+        image[:, 2, 10, 10] = 0.55
+
+        red = GlyphNet(input_mode="red")._expand_input(image)
+        red2 = GlyphNet(input_mode="red2")._expand_input(image)
+
+        self.assertLess(float(red[:, 3].max()), 0.06)
+        self.assertGreater(float(red2[:, 3].max()), 0.99)
+
     def test_load_glyph_model_uses_checkpoint_options(self) -> None:
         from glyph import GlyphNet, load_glyph_model
 
@@ -95,6 +109,31 @@ class GlyphRerankerTests(unittest.TestCase):
 
         self.assertTrue(override.eq(config.CHAR_TO_IDX["B"]).all())
         self.assertTrue(keep.eq(config.CHAR_TO_IDX["A"]).all())
+
+    def test_expert_selective_rerank_uses_most_confident_glyph_model(self) -> None:
+        from eval_reranker import expert_selective_rerank
+
+        primary = torch.full((1, config.NUM_POSITIONS, config.NUM_CHARS), 0.001)
+        primary[..., config.CHAR_TO_IDX["A"]] = 0.52
+        primary[..., config.CHAR_TO_IDX["B"]] = 0.48
+
+        weak_expert = torch.full_like(primary, 0.001)
+        weak_expert[..., config.CHAR_TO_IDX["A"]] = 0.45
+        weak_expert[..., config.CHAR_TO_IDX["B"]] = 0.55
+        strong_expert = torch.full_like(primary, 0.001)
+        strong_expert[..., config.CHAR_TO_IDX["A"]] = 0.10
+        strong_expert[..., config.CHAR_TO_IDX["B"]] = 0.90
+        expert_glyph = torch.stack([weak_expert, strong_expert], dim=0)
+
+        pred = expert_selective_rerank(
+            primary,
+            expert_glyph,
+            top_k=2,
+            primary_margin_max=0.05,
+            glyph_margin_min=0.50,
+        )
+
+        self.assertTrue(pred.eq(config.CHAR_TO_IDX["B"]).all())
 
     def test_reranker_eval_parser_accepts_primary_weights(self) -> None:
         from eval_reranker import build_parser
@@ -160,7 +199,7 @@ class GlyphRerankerTests(unittest.TestCase):
                 "--run-name",
                 "glyph_seed63",
                 "--input-mode",
-                "red",
+                "red2",
                 "--hires",
                 "--head-mode",
                 "gap",
@@ -170,6 +209,10 @@ class GlyphRerankerTests(unittest.TestCase):
                 "0",
                 "--red-line-aug",
                 "0.5",
+                "--faint-aug",
+                "0.4",
+                "--cutout",
+                "0.3",
                 "--no-augment",
                 "--resume",
                 "runs/glyph/checkpoints/last.pt",
@@ -179,12 +222,14 @@ class GlyphRerankerTests(unittest.TestCase):
         self.assertEqual(args.epochs, 3)
         self.assertEqual(args.seed, 63)
         self.assertEqual(args.run_name, "glyph_seed63")
-        self.assertEqual(args.input_mode, "red")
+        self.assertEqual(args.input_mode, "red2")
         self.assertTrue(args.hires)
         self.assertEqual(args.head_mode, "gap")
         self.assertEqual(args.crop_width, 72)
         self.assertEqual(args.num_workers, 0)
         self.assertEqual(args.red_line_aug, 0.5)
+        self.assertEqual(args.faint_aug, 0.4)
+        self.assertEqual(args.cutout, 0.3)
         self.assertFalse(args.augment)
         self.assertEqual(args.resume, Path("runs/glyph/checkpoints/last.pt"))
 

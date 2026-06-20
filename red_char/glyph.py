@@ -52,6 +52,8 @@ class GlyphDataset(Dataset):
         red_only: bool = True,
         augment: bool = False,
         red_line_p: float = 0.0,
+        faint_p: float = 0.0,
+        cutout_p: float = 0.0,
         crop_width: int = GLYPH_CROP_WIDTH,
     ) -> None:
         self.base = base
@@ -67,6 +69,8 @@ class GlyphDataset(Dataset):
         if augment:
             augment_values = dict(config.AUGMENT_PRESETS["medium"])
             augment_values["red_line_p"] = red_line_p
+            augment_values["faint_p"] = faint_p
+            augment_values["cutout_p"] = cutout_p
             self.transform = TrainAugmentation(**augment_values)
         else:
             self.transform = None
@@ -93,7 +97,7 @@ class GlyphNet(nn.Module):
         head_mode: str = "flat",
     ) -> None:
         super().__init__()
-        if input_mode not in {"rgb", "red"}:
+        if input_mode not in {"rgb", "red", "red2"}:
             raise ValueError(f"unknown glyph input mode: {input_mode}")
         if head_mode not in {"flat", "gap"}:
             raise ValueError(f"unknown glyph head mode: {head_mode}")
@@ -101,7 +105,7 @@ class GlyphNet(nn.Module):
         self.hires = hires
         self.crop_width = crop_width
         self.head_mode = head_mode
-        in_channels = 5 if input_mode == "red" else 3
+        in_channels = 5 if input_mode in {"red", "red2"} else 3
         widths = (48, 96, 192, 256)
         pools = (True, False, False, False) if hires else (True, True, False, False)
         stages = []
@@ -140,10 +144,12 @@ class GlyphNet(nn.Module):
             )
 
     def _expand_input(self, x: torch.Tensor) -> torch.Tensor:
-        if self.input_mode != "red":
+        if self.input_mode not in {"red", "red2"}:
             return x
         red = x[:, 0:1]
         redness = (red - x[:, 1:3].amax(dim=1, keepdim=True)).relu()
+        if self.input_mode == "red2":
+            redness = redness / (redness.amax(dim=(2, 3), keepdim=True) + 1e-4)
         darkness = 1.0 - x.mean(dim=1, keepdim=True)
         return torch.cat([x, redness, darkness], dim=1)
 

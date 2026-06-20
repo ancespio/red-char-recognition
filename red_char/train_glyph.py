@@ -87,6 +87,8 @@ def save_checkpoint(
             "all_glyphs": args.all_glyphs,
             "augment": args.augment,
             "red_line_aug": args.red_line_aug,
+            "faint_aug": args.faint_aug,
+            "cutout": args.cutout,
             "fold": args.fold,
             "n_folds": args.n_folds,
         },
@@ -101,12 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-name", type=str, default="local_glyph_seed63")
     parser.add_argument("--lr", type=float, default=1.5e-3)
     parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--input-mode", choices=["rgb", "red"], default="rgb")
+    parser.add_argument("--input-mode", choices=["rgb", "red", "red2"], default="rgb")
     parser.add_argument("--hires", action="store_true")
     parser.add_argument("--head-mode", choices=["flat", "gap"], default="flat")
     parser.add_argument("--crop-width", type=int, default=GLYPH_CROP_WIDTH)
     parser.add_argument("--all-glyphs", action="store_true")
     parser.add_argument("--red-line-aug", type=float, default=0.0)
+    parser.add_argument("--faint-aug", type=float, default=0.0)
+    parser.add_argument("--cutout", type=float, default=0.0)
     parser.add_argument("--augment", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
@@ -137,6 +141,8 @@ def main() -> None:
         red_only=not args.all_glyphs,
         augment=args.augment,
         red_line_p=args.red_line_aug,
+        faint_p=args.faint_aug,
+        cutout_p=args.cutout,
         crop_width=args.crop_width,
     )
     val_ds = GlyphDataset(base, val_indices, red_only=True, augment=False, crop_width=args.crop_width)

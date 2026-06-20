@@ -2180,3 +2180,67 @@ glyph g77+g78 top3 与 g76+g78 结构差异提交（2026-06-20 续）：
   - 根目录 `submission.csv` 已恢复为当前最佳 public 的 `g77+g78 top3 alpha195` 版本。
   - 当前本分支自有最好 Kaggle public：`0.98640`（ref `53871339`）。
   - 仍未达到 `0.99000`；继续冲榜不应再只依赖 2500 holdout 上 1-2 个样本的 glyph 组合波动。
+
+PR #3 高分路线参考与 ghl 迁移启动（2026-06-20 续）：
+
+- 背景：
+  - 用户指出 PR #3 他人分支 Kaggle 已到 `0.9898`。
+  - 已抓取 PR #3 为 `origin/pr/3`，只读参考，不把其分数计入本分支自有成绩。
+- 参考结论：
+  - PR #3 的核心增益不是继续堆同配方 `red + red-line` glyph seed，而是 `ghl` 配方：
+    - glyph 输入 `red2`：对每个局部 crop 的 redness 做 per-crop max normalization，增强浅红笔画。
+    - 强 glyph 增强：`red_line_aug=0.7`、`faint_aug=0.4`、`cutout=0.3`。
+    - 长训 `100 epoch`。
+  - PR #3 还使用 `phl` 主模型长训，但本机优先迁移更直接影响当前 reranker 的 `ghl` glyph 路线。
+- 代码迁移：
+  - 在 `GlyphNet` 中新增 `input_mode="red2"`。
+  - `TrainAugmentation` 新增 `faint_p` 与 `cutout_p`，并将红线增强加重到 1~5 条。
+  - `GlyphDataset` 与 `train_glyph.py` 接入 `--faint-aug`、`--cutout`。
+  - 新增 TDD 覆盖：
+    - `test_glyph_red2_normalizes_faint_redness_per_crop`
+    - 扩展 `test_train_glyph_parser_accepts_local_options` 覆盖 `red2/faint/cutout`
+    - `test_expert_selective_rerank_uses_most_confident_glyph_model`
+  - 验证：
+    - `python -m unittest test_glyph_reranker`：`14 OK`
+- 下一步：
+  - 启动本地 `ghl` seed：`local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100`。
+  - 如果单 glyph best 接近或超过现有 seed78 的 `0.99647`，再进入 reranker 搜索；若明显不如则延长训练或止损。
+
+ghl seed79 分段训练记录（2026-06-20 续）：
+
+- run：`local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100`
+- 训练命令：
+  - `python -u train_glyph.py --epochs 100 --seed 79 --run-name local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100 --input-mode red2 --hires --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --red-line-aug 0.7 --faint-aug 0.4 --cutout 0.3`
+- 第一段因 90 分钟超时中断，完整落盘到 epoch 11：
+  - epoch 5：val_acc `0.97208`
+  - epoch 10：val_acc `0.98379`
+  - epoch 11：阶段 best `0.98652`
+- 第二段从 `last.pt` 恢复后因 90 分钟超时中断，完整落盘到 epoch 22：
+  - epoch 17：val_acc `0.99069`
+  - epoch 19：阶段 best `0.99133`
+  - epoch 22：val_acc `0.97111`
+- 当前判断：
+  - `ghl` 重增强曲线比旧 `red` glyph 慢，符合 PR #3 报告里“长训是关键”的描述。
+  - 继续跑到更高 epoch；暂不进入 reranker，不提交 Kaggle。
+
+ghl seed79 继续训练记录（2026-06-20 续）：
+
+- 第三段从 `last.pt` 恢复后因 90 分钟超时中断，完整落盘到 epoch 30：
+  - epoch 24：val_acc `0.99214`
+  - epoch 27：val_acc `0.99326`
+  - epoch 28：当前 best `0.99422`
+  - epoch 30：val_acc `0.99374`
+- 当前判断：
+  - seed79 仍低于旧 seed78 的 `0.99647`，但已明显超过早期阶段，且目标训练计划是 100 epoch。
+  - 继续长训；若后续在 50~70 epoch 仍无法接近 `0.996+`，再止损或调整 seed/学习率。
+
+ghl seed79 第四段训练记录（2026-06-20 续）：
+
+- 第四段从 `last.pt` 恢复后因 90 分钟超时中断，完整落盘到 epoch 38：
+  - epoch 32：val_acc `0.99406`
+  - epoch 36：val_acc `0.99374`
+  - epoch 38：val_acc `0.99198`
+- 当前 best 仍为 epoch 28 的 `0.99422`。
+- 决策：
+  - 当前 seed79 尚未达到现有 `g77/g78` 水平，不生成 submission，不提交 Kaggle。
+  - 代码层迁移已完成且测试通过；训练可从 `outputs/runs/local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100/checkpoints/last.pt` 继续。
