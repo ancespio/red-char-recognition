@@ -1,8 +1,8 @@
 # 红色字符识别 — 交接文档 (HANDOFF)
 
-> 面向接手的 agent / 协作者。读完即可复现现状并继续推进。最后更新：2026-06-19（**最终版**）。
-> **完整自洽技术报告见 `方法报告_98.96.md`**（无需历史背景即可复现）。当前最佳 = 平台 **98.96%**（已超目标 98.86），已定稿。
-> 最终提交：`red_char/outputs/submission_ghl.csv`。
+> 面向接手的 agent / 协作者。读完即可复现现状并继续推进。最后更新：2026-06-20（**最终合规版**）。
+> **完整自洽技术报告见 `方法报告_98.98.md`**（无需历史背景即可复现，含合规说明）。最终最佳 = 平台 **98.98%**（已超目标 98.86），**完全合规**(无伪标签、无预训练、无外部/泄露数据、无人工标注测试集)。
+> 最终提交：`red_char/outputs/submission_compliant.csv`（15 主模型 = 9 v2hi + 6 phl;glyph = ghl×3）。
 
 ## 1. 任务
 
@@ -22,9 +22,11 @@
 | + glyph 红度隔离(gfr) | 0.9940 | 0.9860 |
 | glyph 红度+红线增强(gfrl) | 0.9944 | 0.9872 |
 | + 红色阈值/集成扩容微调 | 0.9944 | 0.9876 |
-| **★ ghl: red2 + 重红线/浅红/遮挡增强 + 100ep 长训** | **0.9964** | **0.9896** |
+| ghl: red2 + 重红线/浅红/遮挡增强 + 100ep 长训(含伪标签) | 0.9964 | 0.9896 |
+| **★ 合规版:9 v2hi + 6 phl(无伪标签) + ghl×3** | **0.9964** | **0.9898** |
 
-**★ 最终提交文件**：`red_char/outputs/submission_ghl.csv`（平台 **0.9896**，已超目标 98.86）。配置 = 15 主模型(9 v2hi + 3 ps + 3 r2ps) + **ghl glyph ×3** + 选择性重排(primary_margin≤0.50, glyph_margin≥0.05, red_thr=0.20) + 水平 TTA。
+**★ 最终提交文件**：`red_char/outputs/submission_compliant.csv`（平台 **0.9898**，已超目标 98.86,**完全合规**)。配置 = 15 主模型(**9 v2hi + 6 phl,全部从零训练、无伪标签**) + **ghl glyph ×3** + 选择性重排(primary_margin≤0.50, glyph_margin≥0.05, red_thr=0.20) + 水平 TTA。
+> **合规说明**:中期探索过伪标签自训练(用模型给 test 图打标签再训),但因作业规则对测试集的限制,**最终不采用**;其作用被 **phl**(主模型 + 红线增强 0.6 + 100ep 长训,char 0.990→0.994)完全替代——去伪标签反而平台 0.9896→**0.9898**。最终系统不碰 test 标签、不人工标注、不用外部/泄露数据、不用预训练模型。
 
 **制胜一招(98.76→98.96)**：glyph 局部识别器用 **red2 强度鲁棒红度表示 + 重红线遮挡增强(p0.7,1-5条红线) + 浅红渐变增强(p0.4) + cutout(p0.3) + 100 epoch 长训**。在 held-out 6231 红字上错误 19→8(V 0.995→1.0, I 0.976→0.994)。**"长训"是关键**——同样增强只训 40ep 无效;补足 epoch 后才跳分。完整细节见 `方法报告_98.96.md` 第 4 节。
 
@@ -113,17 +115,23 @@ cd red_char
 PY=/home/duxuanzheng/.conda/envs/red_char/bin/python
 CK=outputs/checkpoints
 
-PRIM="$CK/best_ps1.pt $CK/best_ps2.pt $CK/best_ps3.pt $CK/best_r2ps1.pt $CK/best_r2ps2.pt $CK/best_r2ps3.pt $CK/best_v2hs1.pt $CK/best_v2hs2.pt $CK/best_v2hs3.pt $CK/best_v2hs4.pt $CK/best_v2hs5.pt $CK/best_v2hs6.pt $CK/best_v2hs7.pt $CK/best_v2hs8.pt $CK/best_v2hs9.pt"
+# ★ 合规最终系统:9 v2hi + 6 phl(无伪标签) + ghl×3
+PRIM="$CK/best_v2hs1.pt $CK/best_v2hs2.pt $CK/best_v2hs3.pt $CK/best_v2hs4.pt $CK/best_v2hs5.pt $CK/best_v2hs6.pt $CK/best_v2hs7.pt $CK/best_v2hs8.pt $CK/best_v2hs9.pt $CK/best_phl1.pt $CK/best_phl2.pt $CK/best_phl3.pt $CK/best_phl4.pt $CK/best_phl5.pt $CK/best_phl6.pt"
 GHL="$CK/best_ghl1.pt $CK/best_ghl2.pt $CK/best_ghl3.pt"
 
-# ★ 评测最终系统(val，输出 selective exact≈0.9964)
+# 评测(val selective exact≈0.9964)
 CUDA_VISIBLE_DEVICES=0 $PY eval_reranker.py --x-tta --top-k 3 --checkpoints $PRIM --glyph-checkpoints $GHL
 
-# ★ 生成最终提交（平台 0.9896）= submission_ghl.csv
+# ★ 生成最终合规提交（平台 0.9898）= submission_compliant.csv
 CUDA_VISIBLE_DEVICES=0 $PY predict_reranker.py --x-tta --selective --top-k 3 \
   --primary-margin-max 0.50 --glyph-margin-min 0.05 --red-threshold 0.20 \
   --checkpoints $PRIM --glyph-checkpoints $GHL \
-  --output outputs/submission_ghl.csv
+  --output outputs/submission_compliant.csv
+
+# phl(重红线+长训主模型,替代伪标签的合规强主模型)
+OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 CUDA_VISIBLE_DEVICES=0 setsid $PY -u \
+  train.py --model v2hi --red-line-aug 0.6 --epochs 100 --seed 1 --tag _phl1 \
+  > outputs/logs/phl1.log 2>&1 </dev/null &
 
 # ★ 训练制胜 glyph（ghl：red2 + 重红线/浅红/遮挡增强 + 100ep 长训）
 OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 CUDA_VISIBLE_DEVICES=0 setsid $PY -u \
@@ -145,9 +153,10 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 CUDA_VISIBLE_DEVICES=0 setsid $PY -u \
 
 ## 8. 最终状态与（若继续）下一步
 
-**已定稿**：最终最佳 = **`submission_ghl.csv`，平台 0.9896**（已超目标 98.86）。完整自洽方法见 `方法报告_98.96.md`。
+**已定稿**：最终最佳 = **`submission_compliant.csv`，平台 0.9898**（已超目标 98.86,**完全合规**）。完整自洽方法见 `方法报告_98.98.md`。
 
-制胜路径回顾(平台)：97.00(v2集成) → 97.94(v2hi高分辨率) → 98.10(伪标签) → 98.76(glyph重排+红度+红线增强) → **98.96(ghl: red2 + 重红线/浅红/cutout 增强 + 100ep 长训)**。
+制胜路径回顾(平台)：97.00(v2集成) → 97.94(v2hi高分辨率) → 98.76(glyph重排+红度+红线增强) → 98.96(ghl: red2 + 重红线/浅红/cutout + 100ep 长训) → **98.98(去伪标签、用合规的 phl 重红线长训主模型替代)**。
+**注**:加更多 phl seed(18 主)或更多轮数已饱和(18主 vs 15主仅差 1 张预测,平台未升),到顶。
 
 若后续仍要推进（按优先级 / 全部合规）：
 1. **凡改进必用大样本判断**：2500 val 在 ≥0.994 只到 ±1 样本噪声;用 held-out 6231 红字逐类 或 端到端 val ≥+5 样本(ghl 即如此才转化到平台)。阈值/小集成微调不可信(gfb、阈值0.65 均平台反降)。
