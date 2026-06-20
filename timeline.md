@@ -2089,3 +2089,94 @@ glyph seed77 hires red-gap-redline 训练与新候选（2026-06-20）：
   - 当前状态：
     - `submission.csv` 已更新为本地最强 `g76+g77 top3 alpha195` 候选。
     - 等 Kaggle 额度恢复后应优先提交这一版，而不是上一版 `g66+g67+g76 alpha155`。
+
+glyph g76+g77 候选再次提交受限（2026-06-20 续）：
+
+- 提交前自检：
+  - 根目录 `submission.csv` 与 `submissions/submission_local_stage2_ema99s75_g76_g77_rerank_top3_alpha195.csv` 的 SHA256 一致。
+  - CSV 检查：`5000` 行，空 label `0`，异常 id `0`，重复 id `0`。
+- 继续提交当前根目录 `submission.csv`：
+  - 命令：`.kaggle_venv\Scripts\kaggle.exe competitions submit -c verification-red-code -f submission.csv -m "local stage2 ema99s75 g76 g77 rerank top3 alpha195"`
+  - CLI 返回 `400 Bad Request`。
+- 根因确认：
+  - 直接调用 Kaggle Python API 读取响应体：
+  - `Submission not allowed: Your team has used its daily Submission allowance (5) today, please try again tomorrow UTC (4.3 hours from now).`
+- 决策：
+  - 当前 Kaggle public 分数仍不可得；不改动待提交候选。
+  - 不空等额度，继续训练同配方 `hires + red + GAP + red-line` 的第三个 glyph seed 作为本地备选；只有本地 reranker 进一步超过 `2482/2500 = 0.99280` 才替换待提交版本。
+
+glyph seed78 训练、reranker 搜索与 Kaggle 提交（2026-06-20 续）：
+
+- 训练：
+  - run：`local_glyph_seed78_hires_red_gap_redline050`
+  - 命令：
+    - `python -u train_glyph.py --epochs 30 --seed 78 --run-name local_glyph_seed78_hires_red_gap_redline050 --input-mode red --hires --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --red-line-aug 0.5`
+  - 分段训练完成 30 epoch：
+    - epoch 14 前台超时中断，阶段 best 为 epoch 9 的 val_acc `0.98588`
+    - epoch 26：best val_acc `0.99647`
+    - epoch 29：val_acc `0.99583`
+    - epoch 30：val_acc `0.99454`
+  - 结论：seed78 单 glyph best `0.99647`，高于 seed77 的 `0.99631`。
+- 本地 reranker 搜索：
+  - 共用 primary：
+    - `local_v2hi_seed61`
+    - `local_v2hi_seed62`
+    - `local_v2hi_ema99_seed75`
+    - `local_wide_seed51_cache_50ep_20260618`
+    - `local_k5_seed52`
+  - 共用权重：
+    - char weights：`0.17 0.13 0.20 0.34 0.16`
+    - color weights：`0 0.25 0.20 0 0.55`
+  - 组合结果：
+    - `g76 + g78`：`2483/2500 = 0.99320`，`alpha=1.80`
+    - `g77 + g78`：`2484/2500 = 0.99360`，`alpha=1.95`
+    - `g76 + g77 + g78`：`2483/2500 = 0.99320`，`alpha=2.25`
+  - 结论：`g77 + g78` 最优，比上一版 `g76 + g77` 的 `2482/2500 = 0.99280` 再多 2 个 holdout 样本。
+- submission 生成：
+  - 因 `top_k=2/3` 在本地持平，选择更保守的 `top_k=2`。
+  - 命令：
+    - `python predict_reranker.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_v2hi_ema99_seed75/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --glyph-checkpoints outputs/runs/local_glyph_seed77_hires_red_gap_redline050/checkpoints/best.pt outputs/runs/local_glyph_seed78_hires_red_gap_redline050/checkpoints/best.pt --char-weights 0.17 0.13 0.20 0.34 0.16 --color-weights 0 0.25 0.20 0 0.55 --top-k 2 --alpha 1.95 --output ..\submissions\submission_local_stage2_ema99s75_g77_g78_rerank_top2_alpha195.csv`
+  - 输出：`submissions/submission_local_stage2_ema99s75_g77_g78_rerank_top2_alpha195.csv`
+  - 根目录提交副本：`submission.csv`
+  - 预测长度分布：`{1: 1268, 2: 1306, 3: 1232, 4: 1194}`
+  - CSV 检查：`5000` 行，空 label `0`，异常 id `0`，重复 id `0`。
+  - 与上一版 `g76+g77 top3 alpha195` 相比，预测差异为 15 行。
+- Kaggle 提交：
+  - 命令：
+    - `.kaggle_venv\Scripts\kaggle.exe competitions submit -c verification-red-code -f submission.csv -m "local stage2 ema99s75 g77 g78 rerank top2 alpha195"`
+  - 第一次在沙箱内失败：Kaggle OAuth 刷新需写入 `C:\Users\Ances\.kaggle\credentials.json`，被 sandbox 拒绝。
+  - 提权重跑同一命令后提交成功。
+  - ref：`53871184`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98580`
+  - 决策：
+  - 本次把本分支自有最好 Kaggle public 从 `0.98320` 提升到 `0.98580`，但仍未达到目标 `0.99000`。
+  - 当前 public 已超过之前标注为别人提交的 `submission_sample.csv -> 0.98520`，后续仍只以本分支自有提交为准。
+  - 本地 holdout 从 `2478/2500` 提升到 `2484/2500` 对 public 有正收益，但收益小于本地提升幅度；说明 2500 holdout 仍偏乐观，后续需优先做 OOF/更大验证或提交少量结构差异候选，而不是继续无限堆同配方 glyph seed。
+
+glyph g77+g78 top3 与 g76+g78 结构差异提交（2026-06-20 续）：
+
+- `g77+g78 top3 alpha195`：
+  - 背景：`g77+g78` 在本地 `top_k=2/3` 均为 `2484/2500 = 0.99360`，但参考高分分支最终命令偏向 `top_k=3`。
+  - 生成命令：
+    - `python predict_reranker.py --checkpoints outputs/runs/local_v2hi_seed61/checkpoints/best.pt outputs/runs/local_v2hi_seed62/checkpoints/best.pt outputs/runs/local_v2hi_ema99_seed75/checkpoints/best.pt outputs/runs/local_wide_seed51_cache_50ep_20260618/checkpoints/best.pt outputs/runs/local_k5_seed52/checkpoints/best.pt --glyph-checkpoints outputs/runs/local_glyph_seed77_hires_red_gap_redline050/checkpoints/best.pt outputs/runs/local_glyph_seed78_hires_red_gap_redline050/checkpoints/best.pt --char-weights 0.17 0.13 0.20 0.34 0.16 --color-weights 0 0.25 0.20 0 0.55 --top-k 3 --alpha 1.95 --output ..\submissions\submission_local_stage2_ema99s75_g77_g78_rerank_top3_alpha195.csv`
+  - 输出：`submissions/submission_local_stage2_ema99s75_g77_g78_rerank_top3_alpha195.csv`
+  - 与 top2 版相比，预测差异为 4 行。
+  - Kaggle 提交：
+    - ref：`53871339`
+    - status：`SubmissionStatus.COMPLETE`
+    - publicScore：`0.98640`
+  - 结论：top3 比 top2 的 `0.98580` 更好，刷新本分支自有最好。
+- `g76+g78 top3 alpha180`：
+  - 背景：本地 `g76+g78` 为 `2483/2500 = 0.99320`，只比 `g77+g78` 少 1 个 holdout 样本，但组合结构不同。
+  - 输出：`submissions/submission_local_stage2_ema99s75_g76_g78_rerank_top3_alpha180.csv`
+  - 与 `g77+g78 top3` 相比，预测差异为 7 行。
+  - Kaggle 提交：
+    - ref：`53871472`
+    - status：`SubmissionStatus.COMPLETE`
+    - publicScore：`0.98580`
+  - 结论：未超过 `g77+g78 top3`。
+- 当前状态：
+  - 根目录 `submission.csv` 已恢复为当前最佳 public 的 `g77+g78 top3 alpha195` 版本。
+  - 当前本分支自有最好 Kaggle public：`0.98640`（ref `53871339`）。
+  - 仍未达到 `0.99000`；继续冲榜不应再只依赖 2500 holdout 上 1-2 个样本的 glyph 组合波动。
