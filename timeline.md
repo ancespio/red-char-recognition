@@ -2341,3 +2341,54 @@ phl seed80 完整训练、评估与提交（2026-06-21 续）：
 - 结论：
   - `phl` 主模型路线有效，public 从 `0.98780` 提升到 `0.98860`。
   - 仍未达到 `0.99000`；下一步应继续训练更多 `phl` seed 并做主模型集成，而不是只调 `primary_margin/glyph_margin/red_threshold`。
+
+phl seed81 训练与待提交候选（2026-06-21 续）：
+
+- 按用户要求减少中间 smoke/重复验证，直接续跑到 100 epoch。
+- run：`local_v2hi_phl_seed81_redline060_100ep`
+- 训练结果：
+  - epoch 23：第一段完整落盘，阶段 best 为 epoch 20 exact `0.98640`
+  - epoch 72：第二段完整落盘，阶段 best 为 epoch 64 exact `0.99440`
+  - epoch 100：完整跑满，last exact `0.99320`，char `0.99448`
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed81_redline060_100ep/checkpoints/best.pt`（epoch 64，exact `0.99440`）
+- focused reranker 搜索：
+  - 固定上一版有效配置：`x-tta + selective top3 + primary_margin_max=1.00 + glyph_margin_min=0.20 + red_threshold=0.20`
+  - 使用 primary：旧 5 模型 + `phl80` + `phl81`
+  - 最佳本地配置：char/color 权重 `[0.085, 0.065, 0.100, 0.170, 0.080, 0.200, 0.300]`
+  - 本地 exact：`2489/2500 = 0.99560`
+  - 与 phl80-only 版本本地持平，但测试集预测差异 3 行。
+- 生成 submission：
+  - 输出：`submissions/submission_local_stage2_phl80_phl81_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - 根目录 `submission.csv` 已同步为该版本。
+  - CSV 验证：`5000` 行，空标签 `0`，重复 id `0`，bad id `0`。
+  - 长度分布：`{1: 1268, 2: 1307, 3: 1231, 4: 1194}`
+- Kaggle 提交状态：
+  - message：`local stage2 phl80 phl81 g77 g78 g79 selective xtta pm100 gm020 red020`
+  - 初次提交失败：Kaggle CLI 报 `Authentication required to call the Kaggle API`
+  - 已通过浏览器 OAuth `kaggle auth login --force` 刷新账号 `ancespro`。
+  - ref：`53907782`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98840`
+- 结论：
+  - phl80+81 的本地分数与 phl80-only 持平，但 public 从 `0.98860` 降到 `0.98840`。
+  - 根目录 `submission.csv` 已恢复为当前最佳 phl80-only 版本（ref `53898778`, public `0.98860`）。
+  - 继续训练下一枚 phl seed；单个 seed 的 public 泛化仍比小幅本地集成提升更关键。
+
+phl seed82 训练与集成止损（2026-06-21 续）：
+
+- 按用户要求直接长训，不做中途 smoke。
+- run：`local_v2hi_phl_seed82_redline060_100ep`
+- 训练结果：
+  - epoch 45：第一段完整落盘，best exact `0.98840`
+  - epoch 89：第二段完整落盘，best 为 epoch 75 exact `0.99240`
+  - epoch 100：完整跑满，last exact `0.99000`，char `0.99400`
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed82_redline060_100ep/checkpoints/best.pt`（epoch 75，exact `0.99240`）
+- focused reranker 搜索：
+  - 固定 `x-tta + selective top3 + primary_margin_max=1.00 + glyph_margin_min=0.20 + red_threshold=0.20`
+  - 使用 primary：旧 5 模型 + `phl80/phl81/phl82`
+  - 最佳本地配置仍为不含 phl82：`phl80=0.20, phl81=0.30, phl82=0.00`
+  - best exact：`2489/2500 = 0.99560`
+- 结论：
+  - phl82 单模型可用，但加入当前 focused 集成没有提升本地 exact。
+  - 由于 phl80+81 同本地分数但 public 已低于 phl80-only，本轮不提交 phl82 集成，避免继续消耗 Kaggle 配额。
+  - 当前自有 best 仍为 phl80-only：ref `53898778`，public `0.98860`。
