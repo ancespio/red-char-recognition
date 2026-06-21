@@ -2275,3 +2275,69 @@ ghl seed79 跑满 100 epoch 与首轮提交（2026-06-20 续）：
 - 结论：
   - seed79 跑满 100 epoch 后确实带来泛化提升，刷新本分支自有最好 public，从 `0.98640` 提升到 `0.98780`。
   - 仍未达到 `0.99000`；下一步应继续向 PR #3 的 `phl` 100epoch 主模型路线迁移，而不是只微调当前 glyph 组合。
+
+phl 主模型路线启动（2026-06-21）：
+
+- 背景：
+  - 当前本分支自有最好 public 为 `0.98780`（ref `53892677`），仍未到 `0.99000`。
+  - PR #3 的合规高分路线显示：`phl` 主模型使用 `v2hi + red-line-aug 0.6 + 100 epoch` 长训，作为去伪标签后的强主模型补充。
+- 本地代码准备：
+  - `dataset.TrainAugmentation` 已有主图红线增强能力，但 `train.py` 主模型入口未暴露 `--red-line-aug`。
+  - 按 TDD 新增 `test_train_parser_accepts_red_line_augmentation`，先确认失败，再接入 parser、训练 transform 和 checkpoint metadata。
+  - 验证：
+    - `python -m unittest test_ensemble.EnsembleTests.test_train_parser_accepts_red_line_augmentation`：`OK`
+    - `python -m unittest test_ensemble test_glyph_reranker`：`44 OK`
+- 训练决策：
+  - 现有本地 v2hi 主模型均使用 `red_char_weight=2.5`；当前最佳 `local_v2hi_ema99_seed75` 使用 EMA99、warmup、grad clip 和 label smoothing。
+  - 因此首个 phl 本地模型采用 PR #3 的红线长训核心，同时沿用本仓库已验证的 seed75 稳定训练 recipe。
+- 启动命令：
+  - `python -u train.py --epochs 100 --augment --seed 80 --run-name local_v2hi_phl_seed80_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- 当前动作：
+  - 开始本地训练 seed80；完成后再进入主模型集成与 `g77/g78/g79` glyph selective reranker 搜索。
+
+phl seed80 完整训练、评估与提交（2026-06-21 续）：
+
+- 训练进度：
+  - run：`local_v2hi_phl_seed80_redline060_100ep`
+  - 第一段因 90 分钟超时中断，完整落盘到 epoch 28：
+    - epoch 26：阶段 best exact `0.98760`，char `0.99160`
+    - epoch 28：exact `0.98560`
+  - 第二段从 `last.pt` 恢复后因 90 分钟超时中断，完整落盘到 epoch 56：
+    - epoch 41：阶段 best exact `0.98920`
+    - epoch 56：exact `0.98840`
+  - 第三段从 `last.pt` 恢复后因 90 分钟超时中断，完整落盘到 epoch 84：
+    - epoch 69：exact `0.99000`
+    - epoch 70：exact `0.99080`
+    - epoch 84：best exact `0.99200`，char `0.99408`
+  - 第四段从 `last.pt` 恢复后跑满 100 epoch：
+    - epoch 88：exact `0.99080`
+    - epoch 89：exact `0.99160`
+    - epoch 98：exact `0.99120`
+    - epoch 100：exact `0.99040`
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed80_redline060_100ep/checkpoints/best.pt`（epoch 84）
+- reranker 本地搜索：
+  - 使用 primary：旧 5 模型 + `phl80`
+  - 使用 glyph：`g77/g78/g79`
+  - 不带 x-tta：
+    - `phl30` selective：`2487/2500 = 0.99480`
+    - `phl40` selective：`2488/2500 = 0.99520`
+  - 带 x-tta：
+    - `phl30` selective：`2486/2500 = 0.99440`
+    - `phl40` selective：`2489/2500 = 0.99560`
+    - `phl50` selective：`2488/2500 = 0.99520`
+    - `phl60` selective：`2488/2500 = 0.99520`
+  - 最佳本地配置：`phl40 + x-tta + selective top3 + primary_margin_max=1.00 + glyph_margin_min=0.20 + red_threshold=0.20`
+- 生成 submission：
+  - 输出：`submissions/submission_local_stage2_phl80_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - 根目录 `submission.csv` 已同步为该版本。
+  - CSV 验证：`5000` 行，空标签 `0`，重复 id `0`，bad id `0`。
+  - 长度分布：`{1: 1268, 2: 1307, 3: 1231, 4: 1194}`
+  - 与上一版 `g77/g78/g79 selective` 相比，预测差异为 7 行。
+- Kaggle 提交：
+  - message：`local stage2 phl80 g77 g78 g79 selective xtta pm100 gm020 red020`
+  - ref：`53898778`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98860`
+- 结论：
+  - `phl` 主模型路线有效，public 从 `0.98780` 提升到 `0.98860`。
+  - 仍未达到 `0.99000`；下一步应继续训练更多 `phl` seed 并做主模型集成，而不是只调 `primary_margin/glyph_margin/red_threshold`。

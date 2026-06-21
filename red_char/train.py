@@ -210,6 +210,7 @@ def save_checkpoint(
     warmup_epochs: int,
     grad_clip: float,
     label_smoothing: float,
+    red_line_aug: float,
 ) -> None:
     torch.save(
         {
@@ -242,6 +243,7 @@ def save_checkpoint(
                 "warmup_epochs": warmup_epochs,
                 "grad_clip": grad_clip,
                 "label_smoothing": label_smoothing,
+                "red_line_aug": red_line_aug,
             },
             "train_hash": filename_hash(train_names),
             "val_hash": filename_hash(val_names),
@@ -301,6 +303,8 @@ def run_training(args: argparse.Namespace) -> None:
         scheduler = None
     else:
         train_transform = TrainAugmentation.from_preset(args.augment_preset) if effective_augment else None
+        if train_transform is not None:
+            train_transform.red_line_p = args.red_line_aug
         train_loader = make_loader(
             dataset,
             train_indices,
@@ -399,6 +403,7 @@ def run_training(args: argparse.Namespace) -> None:
             "warmup_epochs": args.warmup_epochs,
             "grad_clip": args.grad_clip,
             "label_smoothing": 0.0 if args.overfit_sanity else args.label_smoothing,
+            "red_line_aug": args.red_line_aug if effective_augment else 0.0,
         }
         save_checkpoint(
             run_paths.checkpoint_dir / "last.pt",
@@ -425,6 +430,7 @@ def run_training(args: argparse.Namespace) -> None:
             args.warmup_epochs,
             args.grad_clip,
             0.0 if args.overfit_sanity else args.label_smoothing,
+            args.red_line_aug if effective_augment else 0.0,
         )
         if metrics["exact"] > best_exact:
             best_exact = metrics["exact"]
@@ -453,6 +459,7 @@ def run_training(args: argparse.Namespace) -> None:
                 args.warmup_epochs,
                 args.grad_clip,
                 0.0 if args.overfit_sanity else args.label_smoothing,
+                args.red_line_aug if effective_augment else 0.0,
             )
         if args.overfit_sanity and train_loss < 0.01 and metrics["exact"] == 1.0:
             print("overfit sanity passed")
@@ -479,6 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ema-decay", type=float, default=config.EMA_DECAY)
     parser.add_argument("--model-size", choices=list(config.MODEL_SIZES), default="base")
     parser.add_argument("--augment-preset", choices=list(config.AUGMENT_PRESETS), default="light")
+    parser.add_argument("--red-line-aug", type=float, default=0.0)
     parser.add_argument("--cache-in-ram", action=argparse.BooleanOptionalAction, default=config.CACHE_IN_RAM)
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--resume", type=Path, default=None)

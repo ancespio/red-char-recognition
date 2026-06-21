@@ -120,6 +120,11 @@ class EnsembleTests(unittest.TestCase):
 
                 self.assertEqual(args.augment_preset, preset)
 
+    def test_train_parser_accepts_red_line_augmentation(self) -> None:
+        args = build_train_parser().parse_args(["--red-line-aug", "0.6"])
+
+        self.assertEqual(args.red_line_aug, 0.6)
+
     def test_train_parser_accepts_num_workers_override(self) -> None:
         args = build_train_parser().parse_args(["--num-workers", "0"])
 
