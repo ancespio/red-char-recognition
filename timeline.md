@@ -2424,3 +2424,28 @@ ghl seed80 训练与 public 止损（2026-06-22）：
   - `ghl seed80` 单模型比 seed79 本地 glyph val 更高，但加入 reranker 后 public 从当前 best `0.98860` 降到 `0.98820`。
   - 根目录 `submission.csv` 已恢复为当前最佳 phl80-only 版本（ref `53898778`, public `0.98860`）。
   - 2500 holdout 上 1-2 张甚至 4 张的提升已经不可信；继续冲 0.99 需要换更强的无偏筛选方式或更大分布覆盖，而不是继续按同一 holdout 调小组合。
+
+OOF / 大样本筛选路线启动（2026-06-22 续）：
+
+- 背景：
+  - phl80+81、phl82、ghl80 都出现 holdout 提升但 Kaggle public 下降。
+  - 继续按 2500 holdout 微调组合会继续被噪声骗。
+- 代码现状：
+  - 仓库已有 `kfold.py`、`oof_predict.py`、`tune_oof.py`，且 `train.py` 支持 `--fold` / `--n-folds`。
+  - 现有 fold 产物只有早期 `oof_v2hi_f0_seed71`，不足以评估当前 phl/ghl 路线。
+- 决策：
+  - 先训练一个 phl fold0，得到约 10000 张无偏验证信号。
+  - 若 fold0 信号与 Kaggle public 一致，再扩展更多 fold；若仍与 public 矛盾，说明当前合成/训练分布本身不足，停止小组合赌榜。
+- 启动命令：
+  - `python -u train.py --epochs 100 --augment --seed 83 --run-name oof_phl_f0_seed83_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05 --fold 0 --n-folds 5`
+- fold0 训练结果：
+  - 第一段完整落盘到 epoch 43，阶段 best epoch 42：exact `0.9839`，char `0.99104`
+  - 第二段完整落盘到 epoch 90，阶段 best epoch 87：exact `0.9884`，char `0.99334`
+  - 第三段跑满 100 epoch，last exact `0.9878`，char `0.99308`
+  - best checkpoint：`red_char/outputs/runs/oof_phl_f0_seed83_redline060_100ep/checkpoints/best.pt`（epoch 87，exact `0.9884` on 10000 fold0 val）
+- 对照：
+  - 早期 `oof_v2hi_f0_seed71` 仅 30 epoch，fold0 exact `0.9718`。
+  - phl red-line 长训在 fold0 大样本上确实显著强于早期 v2hi，但幅度远小于 2500 holdout 上的 `0.992+`。
+- 当前判断：
+  - fold0 的 `0.9884/10000` 更接近 Kaggle public `0.98860`，说明小 holdout 已严重乐观。
+  - 继续冲榜应优先补更多 OOF fold 或用 OOF 筛掉噪声组合，不再按 2500 holdout 的 1-4 张提升提交。
