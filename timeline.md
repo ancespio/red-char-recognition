@@ -2392,3 +2392,35 @@ phl seed82 训练与集成止损（2026-06-21 续）：
   - phl82 单模型可用，但加入当前 focused 集成没有提升本地 exact。
   - 由于 phl80+81 同本地分数但 public 已低于 phl80-only，本轮不提交 phl82 集成，避免继续消耗 Kaggle 配额。
   - 当前自有 best 仍为 phl80-only：ref `53898778`，public `0.98860`。
+
+ghl seed80 训练与 public 止损（2026-06-22）：
+
+- 背景：
+  - phl80+81/82 继续堆主模型 seed 已出现“本地持平/提升但 public 反降”。
+  - PR #3 的高分路线还包含 `ghl×3`；本分支目前只有 `ghl seed79`，因此补一枚 `ghl seed80` 做 glyph 多样性。
+- 训练配置：
+  - run：`local_glyph_seed80_hires_red2_gap_heavyline_faint_cutout100`
+  - command：`python -u train_glyph.py --epochs 100 --seed 80 --run-name local_glyph_seed80_hires_red2_gap_heavyline_faint_cutout100 --input-mode red2 --hires --head-mode gap --crop-width 64 --num-workers 0 --cache-in-ram --batch-size 512 --red-line-aug 0.7 --faint-aug 0.4 --cutout 0.3`
+- 训练结果：
+  - epoch 54：best 为 epoch 49，val_acc `0.99711`
+  - epoch 82：best 为 epoch 67，val_acc `0.99743`
+  - epoch 100：完整跑满，last val_acc `0.99663`
+  - best checkpoint：`red_char/outputs/runs/local_glyph_seed80_hires_red2_gap_heavyline_faint_cutout100/checkpoints/best.pt`（epoch 67，val_acc `0.99743`）
+- focused reranker 搜索：
+  - primary 固定当前 public 最佳的 `phl80` 权重组：`[0.102, 0.078, 0.120, 0.204, 0.096, 0.400]`
+  - `g79+g80`：`2488/2500 = 0.99520`
+  - `g77+g78+g79+g80`：`2490/2500 = 0.99600`，最佳参数 `primary_margin_max=1.00, glyph_margin_min=0.05, red_threshold=0.20`
+- 生成 submission：
+  - 输出：`submissions/submission_local_stage2_phl80_g77_g78_g79_g80_selective_xtta_pm100_gm005_red020.csv`
+  - CSV 验证：`5000` 行，空标签 `0`，重复 id `0`，bad id `0`
+  - 长度分布：`{1: 1268, 2: 1307, 3: 1231, 4: 1194}`
+  - 与当前 best `phl80 g77/g78/g79` 相比，预测差异 8 行。
+- Kaggle 提交：
+  - message：`local stage2 phl80 g77 g78 g79 g80 selective xtta pm100 gm005 red020`
+  - ref：`53933719`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98820`
+- 结论：
+  - `ghl seed80` 单模型比 seed79 本地 glyph val 更高，但加入 reranker 后 public 从当前 best `0.98860` 降到 `0.98820`。
+  - 根目录 `submission.csv` 已恢复为当前最佳 phl80-only 版本（ref `53898778`, public `0.98860`）。
+  - 2500 holdout 上 1-2 张甚至 4 张的提升已经不可信；继续冲 0.99 需要换更强的无偏筛选方式或更大分布覆盖，而不是继续按同一 holdout 调小组合。
