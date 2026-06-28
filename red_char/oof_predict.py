@@ -19,10 +19,20 @@ def format_fold_paths(patterns: list[str], fold: int) -> list[Path]:
     return [Path(pattern.format(fold=fold)) for pattern in patterns]
 
 
+def paths_for_fold(paths: list[Path] | None, patterns: list[str], fold: int, n_folds: int, label: str) -> list[Path]:
+    if paths is None:
+        return format_fold_paths(patterns, fold)
+    if len(paths) != n_folds:
+        raise ValueError(f"{label} path count must match n_folds")
+    return [paths[fold]]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--primary-patterns", nargs="+", required=True)
+    parser.add_argument("--primary-patterns", nargs="+", default=[])
+    parser.add_argument("--primary-paths", type=Path, nargs="+")
     parser.add_argument("--glyph-patterns", nargs="*", default=[])
+    parser.add_argument("--glyph-paths", type=Path, nargs="+")
     parser.add_argument("--n-folds", type=int, default=N_FOLDS)
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--x-tta", action="store_true")
@@ -52,8 +62,8 @@ def main() -> None:
 
     for fold in range(args.n_folds):
         _, val_indices = fold_split(n_items, fold=fold, n_folds=args.n_folds)
-        primary_paths = format_fold_paths(args.primary_patterns, fold)
-        glyph_paths = format_fold_paths(args.glyph_patterns, fold)
+        primary_paths = paths_for_fold(args.primary_paths, args.primary_patterns, fold, args.n_folds, "primary")
+        glyph_paths = paths_for_fold(args.glyph_paths, args.glyph_patterns, fold, args.n_folds, "glyph")
         _check_paths(primary_paths + glyph_paths, fold)
 
         primary_models, _ = load_models(primary_paths, device)

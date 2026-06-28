@@ -2529,3 +2529,24 @@ OOF phl fold4 训练（2026-06-28/29）：
 - 结论：
   - 当前 phl red-line 100epoch 路线的无偏均值与 Kaggle 当前 best public `0.98860` 基本一致。
   - 单纯继续同结构同增强堆 seed，预期很难自然越过 `0.99000`；下一步应使用完整 OOF 产物筛选新候选或引入更强训练分布变化后再生成 submission。
+
+完整 OOF primary 阈值筛选与提交（2026-06-29）：
+
+- 源码维护：
+  - `red_char/oof_predict.py` 增加 `--primary-paths` / `--glyph-paths`，用于显式传入每个 fold 的 checkpoint；避免因为 seed 写在目录名里而复制大 checkpoint。
+  - `red_char/predict.py` 增加 `--red-threshold` 和 `--x-tta`，让 test submission 与 OOF 调参设置一致。
+- OOF 预测：
+  - command：`python -u oof_predict.py --primary-paths outputs/runs/oof_phl_f0_seed83_redline060_100ep/checkpoints/best.pt outputs/runs/oof_phl_f1_seed84_redline060_100ep/checkpoints/best.pt outputs/runs/oof_phl_f2_seed85_redline060_100ep/checkpoints/best.pt outputs/runs/oof_phl_f3_seed86_redline060_100ep/checkpoints/best.pt outputs/runs/oof_phl_f4_seed87_redline060_100ep/checkpoints/best.pt --n-folds 5 --x-tta --out outputs/oof/oof_phl_5fold_seed83_87_xtta.pt`
+  - tune：`baseline primary: exact=49426/50000=0.98852 red_threshold=0.45`
+- 生成 submission：
+  - command：`python -u predict.py --checkpoints ... --x-tta --red-threshold 0.45 --output ../submissions/submission_phl_oof5_seed83_87_xtta_red045.csv`
+  - 输出：`submissions/submission_phl_oof5_seed83_87_xtta_red045.csv`
+  - 长度分布：`{1: 1269, 2: 1308, 3: 1230, 4: 1193}`
+- Kaggle 提交：
+  - message：`local stage2 phl oof5 seed83-87 xtta red045`
+  - ref：`54148544`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98840`
+- 结论：
+  - 完整 OOF primary-only 路线没有超过当前 best `0.98860`。
+  - OOF 判断与 public 一致：当前同结构 phl 继续堆 fold/seed 不是突破 0.99 的主要方向。
