@@ -2508,3 +2508,24 @@ OOF phl fold3 训练（2026-06-28）：
 - 结论：
   - fold3 略高于前三个 fold，但没有显示足以支撑 0.99+ 的结构性跳升。
   - 下一步补 fold4，形成完整 5-fold OOF 后再决定是否基于 OOF 生成更可信的候选 submission。
+
+OOF phl fold4 训练（2026-06-28/29）：
+
+- run：`oof_phl_f4_seed87_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 87 --run-name oof_phl_f4_seed87_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05 --fold 4 --n-folds 5`
+- 训练结果：
+  - 第一段完整落盘到 epoch 39。
+  - 第二段完整落盘到 epoch 68。
+  - 第三段跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/oof_phl_f4_seed87_redline060_100ep/checkpoints/best.pt`（epoch 84，exact `0.9893`，char `0.9938` on 10000 fold4 val）
+  - last epoch 100：exact `0.9891`，char `0.9940`
+- 完整 5-fold OOF-like 信号：
+  - fold0：`0.9884`
+  - fold1：`0.9879`
+  - fold2：`0.9883`
+  - fold3：`0.9891`
+  - fold4：`0.9893`
+  - 50000 OOF-like 样本 best 均值约 `0.9886`。
+- 结论：
+  - 当前 phl red-line 100epoch 路线的无偏均值与 Kaggle 当前 best public `0.98860` 基本一致。
+  - 单纯继续同结构同增强堆 seed，预期很难自然越过 `0.99000`；下一步应使用完整 OOF 产物筛选新候选或引入更强训练分布变化后再生成 submission。
