@@ -2486,3 +2486,25 @@ OOF phl fold2 训练（2026-06-23）：
 - 结论：
   - phl red-line 长训是真增益，但当前本地 holdout 的 `0.995+` 组合分数已经不能作为 Kaggle 提交依据。
   - 若继续追 0.99，需要完整 OOF 后筛选新结构/新增强，或引入更接近测试分布的训练覆盖；继续堆 phl/ghl seed 并按 2500 holdout 提交，性价比很低。
+
+OOF phl fold3 训练（2026-06-28）：
+
+- run：`oof_phl_f3_seed86_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 86 --run-name oof_phl_f3_seed86_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05 --fold 3 --n-folds 5`
+- 训练结果：
+  - 第一段完整落盘到 epoch 6。
+  - 第二段完整落盘到 epoch 19。
+  - 第三段完整落盘到 epoch 53。
+  - 第四段完整落盘到 epoch 92。
+  - 第五段跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/oof_phl_f3_seed86_redline060_100ep/checkpoints/best.pt`（epoch 86，exact `0.9891`，char `0.9931` on 10000 fold3 val）
+  - last epoch 100：exact `0.9886`，char `0.9932`
+- 当前 4-fold 大样本信号：
+  - fold0：`0.9884`
+  - fold1：`0.9879`
+  - fold2：`0.9883`
+  - fold3：`0.9891`
+  - 40000 OOF-like 样本 best 均值约 `0.9884`，仍与 Kaggle 当前 best public `0.98860` 同量级。
+- 结论：
+  - fold3 略高于前三个 fold，但没有显示足以支撑 0.99+ 的结构性跳升。
+  - 下一步补 fold4，形成完整 5-fold OOF 后再决定是否基于 OOF 生成更可信的候选 submission。
