@@ -2449,3 +2449,40 @@ OOF / 大样本筛选路线启动（2026-06-22 续）：
 - 当前判断：
   - fold0 的 `0.9884/10000` 更接近 Kaggle public `0.98860`，说明小 holdout 已严重乐观。
   - 继续冲榜应优先补更多 OOF fold 或用 OOF 筛掉噪声组合，不再按 2500 holdout 的 1-4 张提升提交。
+
+OOF phl fold1 训练（2026-06-22 续）：
+
+- 目的：继续扩展大样本无偏验证，避免只看 fold0 或 2500 holdout。
+- run：`oof_phl_f1_seed84_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 84 --run-name oof_phl_f1_seed84_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05 --fold 1 --n-folds 5`
+- 训练结果：
+  - 第一段完整落盘到 epoch 49，阶段 best epoch 47：exact `0.9861`
+  - 第二段完整落盘到 epoch 90，阶段 best epoch 89：exact `0.9879`
+  - 第三段跑满 100 epoch，last exact `0.9875`，char `0.99284`
+  - best checkpoint：`red_char/outputs/runs/oof_phl_f1_seed84_redline060_100ep/checkpoints/best.pt`（epoch 89，exact `0.9879` on 10000 fold1 val）
+- 当前大样本信号：
+  - fold0 best：`0.9884`
+  - fold1 best：`0.9879`
+  - 两个 10000 样本 fold 均贴近 Kaggle 当前 best public `0.98860`，而不是 2500 holdout 的 `0.995+`。
+- 结论：
+  - 继续按小 holdout 组合调参没有可信度。
+  - 若继续训练，优先补 fold2~4 形成完整 OOF；若要省时间，则应基于 fold0/fold1 的 20000 样本先做候选过滤，不把 Kaggle 当验证集。
+
+OOF phl fold2 训练（2026-06-23）：
+
+- run：`oof_phl_f2_seed85_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 85 --run-name oof_phl_f2_seed85_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05 --fold 2 --n-folds 5`
+- 训练结果：
+  - 第一段完整落盘到 epoch 35，阶段 best exact `0.9829`
+  - 第二段完整落盘到 epoch 69，阶段 best epoch 63：exact `0.9875`
+  - 第三段完整落盘到 epoch 96，阶段 best epoch 79：exact `0.9883`
+  - 第四段跑满 100 epoch，last exact `0.9878`，char `0.99282`
+  - best checkpoint：`red_char/outputs/runs/oof_phl_f2_seed85_redline060_100ep/checkpoints/best.pt`（epoch 79，exact `0.9883` on 10000 fold2 val）
+- 当前 3-fold 大样本信号：
+  - fold0：`0.9884`
+  - fold1：`0.9879`
+  - fold2：`0.9883`
+  - 30000 OOF-like 样本均值约 `0.9882`，与 Kaggle 当前 best public `0.98860` 同量级。
+- 结论：
+  - phl red-line 长训是真增益，但当前本地 holdout 的 `0.995+` 组合分数已经不能作为 Kaggle 提交依据。
+  - 若继续追 0.99，需要完整 OOF 后筛选新结构/新增强，或引入更接近测试分布的训练覆盖；继续堆 phl/ghl seed 并按 2500 holdout 提交，性价比很低。
