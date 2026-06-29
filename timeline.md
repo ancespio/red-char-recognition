@@ -2550,3 +2550,28 @@ OOF phl fold4 训练（2026-06-28/29）：
 - 结论：
   - 完整 OOF primary-only 路线没有超过当前 best `0.98860`。
   - OOF 判断与 public 一致：当前同结构 phl 继续堆 fold/seed 不是突破 0.99 的主要方向。
+
+参考 PR #3 后补 ghl seed81（2026-06-29）：
+
+- 参考对象：
+  - `origin/pr/3` 报告称其最终 `0.9898` 方案为 `15` 个主模型（`9 v2hi + 6 phl`）+ `ghl×3`，selective rerank 参数约为 `primary_margin<=0.50, glyph_margin>=0.05, red_threshold=0.20`。
+  - 本地当前最大缺口之一是 red2+重增强+100epoch 的 ghl 数量不足；此前只有 `seed79/80` 两个。
+- 训练：
+  - run：`local_glyph_seed81_hires_red2_gap_heavyline_faint_cutout100`
+  - command：`python -u train_glyph.py --epochs 100 --seed 81 --run-name local_glyph_seed81_hires_red2_gap_heavyline_faint_cutout100 --input-mode red2 --hires --head-mode gap --red-line-aug 0.7 --faint-aug 0.4 --cutout 0.3 --num-workers 0 --cache-in-ram`
+  - 分段续训到 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_glyph_seed81_hires_red2_gap_heavyline_faint_cutout100/checkpoints/best.pt`（epoch 74，val_acc `0.99775`）
+  - last epoch 100：val_acc `0.99727`
+- 生成 submission：
+  - primary：`local_v2hi_phl_seed80_redline060_100ep`
+  - glyph：`local_glyph_seed79_hires_red2_gap_heavyline_faint_cutout100` + `local_glyph_seed80_hires_red2_gap_heavyline_faint_cutout100` + `local_glyph_seed81_hires_red2_gap_heavyline_faint_cutout100`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 0.50 --glyph-margin-min 0.05 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_ghl79_80_81_selective_xtta_pm050_gm005_red020.csv`
+- Kaggle 提交：
+  - message：`local stage2 phl80 ghl79 ghl80 ghl81 selective xtta pm050 gm005 red020`
+  - ref：`54166774`
+  - status：`SubmissionStatus.COMPLETE`
+  - publicScore：`0.98760`
+- 结论：
+  - seed81 单体 glyph 验证很强，但在当前 `phl80` 主模型下，用 `ghl79/80/81` 替换旧 `g77/g78/g79` 没有转化，public 明显低于当前 best `0.98860`。
+  - PR #3 的增益更可能来自大主模型池（`9 v2hi + 6 phl`）与 glyph 的组合，而不是单纯把 glyph 换成 ghl×3。
