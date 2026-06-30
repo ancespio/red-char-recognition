@@ -2612,3 +2612,22 @@ seed88 集成提交与 PR #3 复查（2026-06-30）：
   - seed88 加入主模型池后 public 从旧 best `0.98860` 提升到 `0.98920`，当前策略有效。
   - 本地当前 best 更新为 `submission_phl80_81_82_88_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`。
   - PR #3 风格阈值在本地当前模型池上不如旧 best 阈值线，后续优先继续补 full phl 主模型 seed。
+
+补 phl 主模型 seed89 与提交（2026-06-30）：
+
+- run：`local_v2hi_phl_seed89_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 89 --run-name local_v2hi_phl_seed89_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- 训练结果：
+  - 分段续训并跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed89_redline060_100ep/checkpoints/best.pt`（epoch 94，exact `0.9908`，char `0.9933`，color `0.9999` on 2500 val）
+  - last epoch 100：exact `0.9900`，char `0.9935`，color `0.9999`
+- submission：
+  - primary：`phl80/81/82/88/89`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_88_89_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54210278`
+  - publicScore：`0.98920`
+- 结论：
+  - seed89 单模型验证很强，但加入当前集成后 public 与 seed88 版本持平。
+  - 继续按 PR #3 的 `6 phl` 目标补 full phl seed90，再评估是否能越过 `0.99000`。
