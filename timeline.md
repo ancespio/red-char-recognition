@@ -2591,3 +2591,24 @@ OOF phl fold4 训练（2026-06-28/29）：
 - 结论：
   - seed88 是当前本地 phl full-data 系列里单模型验证最强的一支。
   - 下一步用 `phl80/81/82/88` 与已有 glyph/reranker 组合生成候选 submission；若 public 不升，再继续补 full phl seed 而不是复用 OOF fold checkpoint。
+
+seed88 集成提交与 PR #3 复查（2026-06-30）：
+
+- PR #3 复查：
+  - 已刷新 `origin/pr/3`，最新 commit 仍为 `69380ea Compliant final (no pseudo-labels): platform 98.98`，暂无新提交。
+- submission A：
+  - primary：`phl80/81/82/88`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_88_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54193605`
+  - publicScore：`0.98920`
+- submission B：
+  - 同模型，改用 PR #3 风格阈值：`--primary-margin-max 0.50 --glyph-margin-min 0.05 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_88_g77_g78_g79_selective_xtta_pm050_gm005_red020.csv`
+  - Kaggle ref：`54193909`
+  - publicScore：`0.98880`
+- 结论：
+  - seed88 加入主模型池后 public 从旧 best `0.98860` 提升到 `0.98920`，当前策略有效。
+  - 本地当前 best 更新为 `submission_phl80_81_82_88_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`。
+  - PR #3 风格阈值在本地当前模型池上不如旧 best 阈值线，后续优先继续补 full phl 主模型 seed。
