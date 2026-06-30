@@ -2575,3 +2575,19 @@ OOF phl fold4 训练（2026-06-28/29）：
 - 结论：
   - seed81 单体 glyph 验证很强，但在当前 `phl80` 主模型下，用 `ghl79/80/81` 替换旧 `g77/g78/g79` 没有转化，public 明显低于当前 best `0.98860`。
   - PR #3 的增益更可能来自大主模型池（`9 v2hi + 6 phl`）与 glyph 的组合，而不是单纯把 glyph 换成 ghl×3。
+
+补 phl 主模型 seed88（2026-06-29/30）：
+
+- 背景：
+  - 参考 `origin/pr/3`，高分组合主要差异之一是更大的主模型池（`9 v2hi + 6 phl`）。
+  - 本地当前合规强主模型只有 `phl80/81/82`，OOF fold 模型不适合直接当全量 test 主模型池使用。
+- run：`local_v2hi_phl_seed88_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 88 --run-name local_v2hi_phl_seed88_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- 训练结果：
+  - 首段在用户中断前完整落盘到 epoch 11。
+  - 后续分段续训并跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed88_redline060_100ep/checkpoints/best.pt`（epoch 83，exact `0.9904`，char `0.9930`，color `0.9999` on 2500 val）
+  - last epoch 100：exact `0.9884`，char `0.9924`，color `0.9998`
+- 结论：
+  - seed88 是当前本地 phl full-data 系列里单模型验证最强的一支。
+  - 下一步用 `phl80/81/82/88` 与已有 glyph/reranker 组合生成候选 submission；若 public 不升，再继续补 full phl seed 而不是复用 OOF fold checkpoint。
