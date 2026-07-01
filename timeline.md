@@ -2651,3 +2651,21 @@ seed88 集成提交与 PR #3 复查（2026-06-30）：
   - seed90 单模型是当前 full phl 中本地验证最强，但加入 6-phl 集成后 public 反降。
   - 当前 best 仍为 `phl80/81/82/88 + g77/g78/g79` 的 `0.98920`。
   - 后续不能继续机械加 phl；应按 PR #3 的方向尝试 `v2hi + phl` 混合主模型池。
+
+现有 v2hi 混合池尝试（2026-07-01）：
+
+- 现有 full v2hi checkpoint 盘点：
+  - `local_v2hi_ema99_seed75` best exact `0.9872`
+  - `local_v2hi_seed61` best exact `0.9852`
+  - `local_v2hi_seed62` best exact `0.9836`
+  - 其他 `local_v2hi_seed73`、`local_v2hi_medium_seed72`、`local_v2hi_ema_seed74` 明显偏弱。
+- submission：
+  - primary：`phl80/81/82/88 + v2hi75/61/62`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_88_v2hi75_61_62_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54219189`
+  - publicScore：`0.98840`
+- 结论：
+  - 旧 v2hi checkpoint 直接混入会拖低 public，不能直接复刻 PR #3 的 `9 v2hi + 6 phl`。
+  - 若继续走混合池，需要新训高质量 plain v2hi 100epoch，而不是复用这些早期 v2hi。
