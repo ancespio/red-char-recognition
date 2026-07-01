@@ -2681,3 +2681,16 @@ seed88 集成提交与 PR #3 复查（2026-06-30）：
 - 结论：
   - seed91 明显强于旧 v2hi seed61/62/75，但仍低于当前 phl 系列。
   - 暂不提交 Kaggle；先测试 seed90 在 4-phl 组合里替换 seed88/82 是否优于当前 best。
+
+seed90 替换式 4-phl 组合（2026-07-01）：
+
+- submission：
+  - primary：`phl80/81/82/90`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_90_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54231386`
+  - publicScore：`0.98900`
+- 结论：
+  - seed90 替换 seed88 后 public 低于当前 best `0.98920`。
+  - 当前最佳仍为 `phl80/81/82/88 + g77/g78/g79`，后续需要寻找更合适的新 seed/结构，而不是按本地单模型分数直接替换。
