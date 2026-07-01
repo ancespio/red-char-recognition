@@ -2669,3 +2669,15 @@ seed88 集成提交与 PR #3 复查（2026-06-30）：
 - 结论：
   - 旧 v2hi checkpoint 直接混入会拖低 public，不能直接复刻 PR #3 的 `9 v2hi + 6 phl`。
   - 若继续走混合池，需要新训高质量 plain v2hi 100epoch，而不是复用这些早期 v2hi。
+
+新训 plain v2hi seed91（2026-07-01）：
+
+- run：`local_v2hi_seed91_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 91 --run-name local_v2hi_seed91_100ep --red-char-weight 2.5 --model-size v2hi --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- 训练结果：
+  - 分段续训并跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_seed91_100ep/checkpoints/best.pt`（epoch 82，exact `0.9888`，char `0.9918`，color `0.9998` on 2500 val）
+  - last epoch 100：exact `0.9884`，char `0.9919`，color `0.9998`
+- 结论：
+  - seed91 明显强于旧 v2hi seed61/62/75，但仍低于当前 phl 系列。
+  - 暂不提交 Kaggle；先测试 seed90 在 4-phl 组合里替换 seed88/82 是否优于当前 best。
