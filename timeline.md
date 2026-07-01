@@ -2631,3 +2631,23 @@ seed88 集成提交与 PR #3 复查（2026-06-30）：
 - 结论：
   - seed89 单模型验证很强，但加入当前集成后 public 与 seed88 版本持平。
   - 继续按 PR #3 的 `6 phl` 目标补 full phl seed90，再评估是否能越过 `0.99000`。
+
+补 phl 主模型 seed90 与 6-phl 提交（2026-07-01）：
+
+- run：`local_v2hi_phl_seed90_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 90 --run-name local_v2hi_phl_seed90_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- 训练结果：
+  - 分段续训并跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed90_redline060_100ep/checkpoints/best.pt`（epoch 72，exact `0.9916`，char `0.9938`，color `0.9999` on 2500 val）
+  - last epoch 100：exact `0.9900`，char `0.9938`，color `0.9999`
+- submission：
+  - primary：`phl80/81/82/88/89/90`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_88_89_90_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54218951`
+  - publicScore：`0.98880`
+- 结论：
+  - seed90 单模型是当前 full phl 中本地验证最强，但加入 6-phl 集成后 public 反降。
+  - 当前 best 仍为 `phl80/81/82/88 + g77/g78/g79` 的 `0.98920`。
+  - 后续不能继续机械加 phl；应按 PR #3 的方向尝试 `v2hi + phl` 混合主模型池。
