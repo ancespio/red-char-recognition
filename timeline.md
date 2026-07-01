@@ -2694,3 +2694,23 @@ seed90 替换式 4-phl 组合（2026-07-01）：
 - 结论：
   - seed90 替换 seed88 后 public 低于当前 best `0.98920`。
   - 当前最佳仍为 `phl80/81/82/88 + g77/g78/g79`，后续需要寻找更合适的新 seed/结构，而不是按本地单模型分数直接替换。
+
+phl89 替换式 4-phl 组合（2026-07-01）：
+
+- submission A：
+  - primary：`phl80/81/88/89`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_88_89_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54231950`
+  - publicScore：`0.98900`
+- submission B：
+  - primary：`phl80/82/88/89`
+  - glyph：`g77/g78/g79`
+  - rerank：同上
+  - 输出：`submissions/submission_phl80_82_88_89_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54231947`
+  - publicScore：`0.98880`
+- 结论：
+  - phl89 替换式组合没有超过当前 best `0.98920`。
+  - 现有 full phl 的最佳 public 组合仍为 `phl80/81/82/88`；继续需要新 seed 或新结构，而不是重排已测组合。
