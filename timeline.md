@@ -2733,3 +2733,18 @@ phl89 替换式 4-phl 组合（2026-07-01）：
 - 结论：
   - seed92 是目前本地验证最强 full phl，但替换 seed88 后 public 仍只与当前 best 持平。
   - 当前 best 仍为 `0.98920`，继续需要新 seed 或引入更有效的组合筛选，不应只看 2500 val 的单模型分数。
+
+补 phl 主模型 seed93 与 seed92 组合复测（2026-07-02/03）：
+
+- seed93 run：`local_v2hi_phl_seed93_redline060_100ep`
+- seed93 command：`python -u train.py --epochs 100 --augment --seed 93 --run-name local_v2hi_phl_seed93_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- seed93 训练结果：
+  - 分段续训并跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed93_redline060_100ep/checkpoints/best.pt`（epoch 68，exact `0.9908`，char `0.9939`，color `0.9999` on 2500 val）
+  - last epoch 100：exact `0.9904`，char `0.9939`，color `0.9999`
+- seed92 组合复测：
+  - `phl80/81/88/92 + g77/g78/g79`：`submissions/submission_phl80_81_88_92_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`，Kaggle ref `54274163`，publicScore `0.98860`
+  - `phl80/82/88/92 + g77/g78/g79`：`submissions/submission_phl80_82_88_92_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`，Kaggle ref `54274162`，publicScore `0.98880`
+- 结论：
+  - seed92 虽然本地单模型最强，但更多替换组合没有转化；当前 best 仍为 `0.98920`。
+  - 继续需要训练新 seed 或改变 reranker/筛选方式，不能再按 2500 val 单模型排序直接替换。
