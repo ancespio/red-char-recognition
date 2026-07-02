@@ -2714,3 +2714,22 @@ phl89 替换式 4-phl 组合（2026-07-01）：
 - 结论：
   - phl89 替换式组合没有超过当前 best `0.98920`。
   - 现有 full phl 的最佳 public 组合仍为 `phl80/81/82/88`；继续需要新 seed 或新结构，而不是重排已测组合。
+
+补 phl 主模型 seed92 与提交（2026-07-01/02）：
+
+- run：`local_v2hi_phl_seed92_redline060_100ep`
+- command：`python -u train.py --epochs 100 --augment --seed 92 --run-name local_v2hi_phl_seed92_redline060_100ep --red-char-weight 2.5 --model-size v2hi --red-line-aug 0.6 --num-workers 0 --cache-in-ram --ema --ema-decay 0.99 --warmup-epochs 2 --grad-clip 5.0 --label-smoothing 0.05`
+- 训练结果：
+  - 分段续训并跑满 100 epoch。
+  - best checkpoint：`red_char/outputs/runs/local_v2hi_phl_seed92_redline060_100ep/checkpoints/best.pt`（epoch 100，exact `0.9928`，char `0.9947`，color `0.9999` on 2500 val）
+  - last epoch 100：exact `0.9928`，char `0.9947`，color `0.9999`
+- submission：
+  - primary：`phl80/81/82/92`
+  - glyph：`g77/g78/g79`
+  - rerank：`--x-tta --selective --top-k 3 --primary-margin-max 1.00 --glyph-margin-min 0.20 --red-threshold 0.20`
+  - 输出：`submissions/submission_phl80_81_82_92_g77_g78_g79_selective_xtta_pm100_gm020_red020.csv`
+  - Kaggle ref：`54248934`
+  - publicScore：`0.98920`
+- 结论：
+  - seed92 是目前本地验证最强 full phl，但替换 seed88 后 public 仍只与当前 best 持平。
+  - 当前 best 仍为 `0.98920`，继续需要新 seed 或引入更有效的组合筛选，不应只看 2500 val 的单模型分数。
